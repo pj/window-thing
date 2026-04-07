@@ -8,3 +8,6 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.setuptools]
+packages = []
