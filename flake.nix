@@ -5,45 +5,12 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
-    pyproject-nix = {
-      url = "github:pyproject-nix/pyproject.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    uv2nix = {
-      url = "github:pyproject-nix/uv2nix";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    pyproject-build-systems = {
-      url = "github:pyproject-nix/build-system-pkgs";
-      inputs.pyproject-nix.follows = "pyproject-nix";
-      inputs.uv2nix.follows = "uv2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, pyproject-nix, uv2nix, pyproject-build-systems }:
-    let
-      workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
-      overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
-    in
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachSystem [ "aarch64-darwin" "x86_64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        lib = nixpkgs.lib;
-
-        pythonSet = (pkgs.callPackage pyproject-nix.build.packages {
-          python = pkgs.python3;
-        }).overrideScope (
-          lib.composeManyExtensions [
-            pyproject-build-systems.overlays.wheel
-            overlay
-          ]
-        );
-
-        pythonEnv = pythonSet.mkVirtualEnv "window-thing-python-env" workspace.deps.default;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -63,9 +30,6 @@
             jq
             yq
 
-            # Python tools (spec-kit / specify-cli via uv2nix)
-            uv
-            pythonEnv
           ];
 
           shellHook = ''

@@ -27,5 +27,7 @@ xcuserdata/
 result
 result-*
 
+.direnv
+
 # Secrets/config (keep templates)
 # Don't ignore config.yaml as we want the example
