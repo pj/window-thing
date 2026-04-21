@@ -1,5 +1,10 @@
 import Foundation
 
+// MARK: - LayoutModification Namespace
+
+/// Namespace for pure layout-tree transformation helpers.
+public enum LayoutModification {}
+
 // MARK: - Layout Location
 
 /// Represents a path to a specific node in a layout tree
