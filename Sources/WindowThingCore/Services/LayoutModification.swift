@@ -859,3 +859,177 @@ extension LayoutNode {
         }
     }
 }
+
+// MARK: - Ghost Cell Helpers
+
+extension LayoutModification {
+
+    /// Append a new trailing column to `node`.
+    /// - If node is `.columns`: appends `newNode` as the last column.
+    /// - If node is a leaf: wraps both in `.columns([node, newNode])`.
+    /// The existing columns are redistributed to equal percentages; `newNode` gets `newPercentage`.
+    public static func appendTrailingColumn(
+        to node: LayoutNode,
+        newNode: LayoutNode = .stackAll()
+    ) -> LayoutNode {
+        switch node.type {
+        case .columns:
+            let existing = node.columns ?? []
+            let count = Double(existing.count + 1)
+            let equalPct = 100.0 / count
+            var rebalanced = existing.map { col in
+                LayoutNode(
+                    type: col.type,
+                    percentage: equalPct,
+                    pinned: col.pinned,
+                    columns: col.columns,
+                    rows: col.rows,
+                    windows: col.windows,
+                    stackRemaining: col.stackRemaining,
+                    layout: col.layout?.value,
+                    floats: col.floats,
+                    zoomed: col.zoomed
+                )
+            }
+            rebalanced.append(LayoutNode(
+                type: newNode.type,
+                percentage: equalPct,
+                pinned: newNode.pinned,
+                columns: newNode.columns,
+                rows: newNode.rows,
+                windows: newNode.windows,
+                stackRemaining: newNode.stackRemaining,
+                layout: newNode.layout?.value,
+                floats: newNode.floats,
+                zoomed: newNode.zoomed
+            ))
+            return LayoutNode(type: .columns, percentage: node.percentage, columns: rebalanced)
+
+        default:
+            // Leaf or rows node: wrap in a 2-column layout
+            let pct = 50.0
+            let left = LayoutNode(
+                type: node.type,
+                percentage: pct,
+                pinned: node.pinned,
+                columns: node.columns,
+                rows: node.rows,
+                windows: node.windows,
+                stackRemaining: node.stackRemaining,
+                layout: node.layout?.value,
+                floats: node.floats,
+                zoomed: node.zoomed
+            )
+            let right = LayoutNode(
+                type: newNode.type,
+                percentage: pct,
+                pinned: newNode.pinned,
+                columns: newNode.columns,
+                rows: newNode.rows,
+                windows: newNode.windows,
+                stackRemaining: newNode.stackRemaining,
+                layout: newNode.layout?.value,
+                floats: newNode.floats,
+                zoomed: newNode.zoomed
+            )
+            return LayoutNode(type: .columns, percentage: node.percentage, columns: [left, right])
+        }
+    }
+
+    /// Append a new trailing row to `node`.
+    /// - If node is `.rows`: appends `newNode` as the last row.
+    /// - If node is a leaf: wraps both in `.rows([node, newNode])`.
+    public static func appendTrailingRow(
+        to node: LayoutNode,
+        newNode: LayoutNode = .stackAll()
+    ) -> LayoutNode {
+        switch node.type {
+        case .rows:
+            let existing = node.rows ?? []
+            let count = Double(existing.count + 1)
+            let equalPct = 100.0 / count
+            var rebalanced = existing.map { row in
+                LayoutNode(
+                    type: row.type,
+                    percentage: equalPct,
+                    pinned: row.pinned,
+                    columns: row.columns,
+                    rows: row.rows,
+                    windows: row.windows,
+                    stackRemaining: row.stackRemaining,
+                    layout: row.layout?.value,
+                    floats: row.floats,
+                    zoomed: row.zoomed
+                )
+            }
+            rebalanced.append(LayoutNode(
+                type: newNode.type,
+                percentage: equalPct,
+                pinned: newNode.pinned,
+                columns: newNode.columns,
+                rows: newNode.rows,
+                windows: newNode.windows,
+                stackRemaining: newNode.stackRemaining,
+                layout: newNode.layout?.value,
+                floats: newNode.floats,
+                zoomed: newNode.zoomed
+            ))
+            return LayoutNode(type: .rows, percentage: node.percentage, rows: rebalanced)
+
+        default:
+            // Leaf or columns node: wrap in a 2-row layout
+            let pct = 50.0
+            let top = LayoutNode(
+                type: node.type,
+                percentage: pct,
+                pinned: node.pinned,
+                columns: node.columns,
+                rows: node.rows,
+                windows: node.windows,
+                stackRemaining: node.stackRemaining,
+                layout: node.layout?.value,
+                floats: node.floats,
+                zoomed: node.zoomed
+            )
+            let bottom = LayoutNode(
+                type: newNode.type,
+                percentage: pct,
+                pinned: newNode.pinned,
+                columns: newNode.columns,
+                rows: newNode.rows,
+                windows: newNode.windows,
+                stackRemaining: newNode.stackRemaining,
+                layout: newNode.layout?.value,
+                floats: newNode.floats,
+                zoomed: newNode.zoomed
+            )
+            return LayoutNode(type: .rows, percentage: node.percentage, rows: [top, bottom])
+        }
+    }
+
+    /// Returns `true` if a new trailing column can be added without any resulting column
+    /// falling below `minPercentage` of the display width.
+    public static func canAppendColumn(to node: LayoutNode, minPercentage: Double = 15.0) -> Bool {
+        let newCount: Int
+        switch node.type {
+        case .columns:
+            newCount = (node.columns?.count ?? 0) + 1
+        default:
+            newCount = 2
+        }
+        return (100.0 / Double(newCount)) >= minPercentage
+    }
+
+    /// Returns `true` if a new trailing row can be added without any resulting row
+    /// falling below `minPercentage` of the display height.
+    public static func canAppendRow(to node: LayoutNode, minPercentage: Double = 15.0) -> Bool {
+        let newCount: Int
+        switch node.type {
+        case .rows:
+            newCount = (node.rows?.count ?? 0) + 1
+        default:
+            newCount = 2
+        }
+        return (100.0 / Double(newCount)) >= minPercentage
+    }
+}

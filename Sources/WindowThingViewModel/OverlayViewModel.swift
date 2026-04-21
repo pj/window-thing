@@ -21,21 +21,30 @@ public class OverlayViewModel: ObservableObject {
     @Published public var carouselOffset: Int = 0
     public let carouselPageSize = 3
 
+    // Cell picker state
+    @Published public var isCellPickerVisible: Bool = false
+    @Published public var pendingMoveWindow: Window?
+    @Published public var pickerCells: [IndexedCell] = []
+    @Published public var pickerGhostPositions: [GhostCellPosition] = []
+
     // Undo
     public let undoManager = UndoManager()
     private var preDragSnapshot: LayoutNode?
 
     private let windowManager: any WindowManaging
     private let layoutManager: any LayoutManaging
+    private let configManager: any ConfigProviding
     // internal (not private) so @testable tests can seed it
     var originalLayouts: [Layout] = []
 
     public init(
         windowManager: any WindowManaging = WindowManager.shared,
-        layoutManager: any LayoutManaging = LayoutManager.shared
+        layoutManager: any LayoutManaging = LayoutManager.shared,
+        configManager: any ConfigProviding = ConfigManager.shared
     ) {
         self.windowManager = windowManager
         self.layoutManager = layoutManager
+        self.configManager = configManager
     }
 
     // MARK: - Refresh
@@ -172,6 +181,7 @@ public class OverlayViewModel: ObservableObject {
         layoutManager.updateLayout(layout)
         layoutManager.applyLayout(layout)
         originalLayouts = layouts
+        configManager.saveLayouts(layouts)
     }
 
     public func cancelEdits() {
@@ -180,6 +190,100 @@ public class OverlayViewModel: ObservableObject {
         if let first = originalLayouts.first {
             startEditing(first)
         }
+    }
+
+    // MARK: - Layout CRUD
+
+    /// Create a new layout (single full-screen stackAll) and begin editing it.
+    public func addLayout() {
+        let newLayout = Layout(
+            name: "New Layout",
+            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
+        )
+        layouts.append(newLayout)
+        configManager.saveLayouts(layouts)
+        selectLayout(at: layouts.count - 1)
+    }
+
+    /// Duplicate `layout` with a new UUID and name suffix, insert after the original.
+    public func duplicateLayout(_ layout: Layout) {
+        let copy = Layout(
+            id: UUID(),
+            name: layout.name + " Copy",
+            quickKey: nil,
+            screenSets: layout.screenSets
+        )
+        if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
+            layouts.insert(copy, at: idx + 1)
+        } else {
+            layouts.append(copy)
+        }
+        configManager.saveLayouts(layouts)
+        if let newIdx = layouts.firstIndex(where: { $0.id == copy.id }) {
+            selectLayout(at: newIdx)
+        }
+    }
+
+    /// Delete `layout`. Switches editor to the nearest remaining layout.
+    public func deleteLayout(_ layout: Layout) {
+        guard layouts.count > 1 else { return }
+        let idx = layouts.firstIndex(where: { $0.id == layout.id }) ?? 0
+        layouts.removeAll { $0.id == layout.id }
+        originalLayouts = layouts
+        configManager.saveLayouts(layouts)
+        let nextIdx = min(idx, layouts.count - 1)
+        selectLayout(at: nextIdx)
+    }
+
+    // MARK: - Cell Picker
+
+    /// Show the cell picker for `window`. Computes current cells + ghost positions.
+    public func showCellPicker(for window: Window) {
+        guard let layout = editingLayout else { return }
+        pickerCells = layoutManager.cellAddresses(for: layout, displays: displays)
+        pickerGhostPositions = CellIndexer.ghostPositions(layout: layout, displays: displays)
+        pendingMoveWindow = window
+        isCellPickerVisible = true
+    }
+
+    public func hideCellPicker() {
+        isCellPickerVisible = false
+        pendingMoveWindow = nil
+        pickerCells = []
+        pickerGhostPositions = []
+    }
+
+    /// Move the pending window to the selected cell address.
+    public func selectCell(_ address: CellAddress) {
+        guard let window = pendingMoveWindow else { return }
+        try? layoutManager.moveWindow(window, toCellAt: address, displays: displays)
+        hideCellPicker()
+    }
+
+    /// Append a ghost position's column/row to the current layout tree, then move pending window there.
+    public func selectGhostCell(_ position: GhostCellPosition) {
+        guard let window = pendingMoveWindow,
+              let currentNode = editingRootNode else { return }
+
+        let newNode: LayoutNode
+        switch position.direction {
+        case .trailingColumn:
+            newNode = LayoutModification.appendTrailingColumn(to: currentNode)
+        case .trailingRow:
+            newNode = LayoutModification.appendTrailingRow(to: currentNode)
+        }
+
+        // Commit the new root node (registers undo, updates editingLayout/layouts)
+        commitEdit(newNode, actionName: "Add Cell")
+
+        // Re-index against the now-updated editingLayout
+        if let layout = editingLayout {
+            let updatedCells = layoutManager.cellAddresses(for: layout, displays: displays)
+            if let lastCell = updatedCells.last {
+                try? layoutManager.moveWindow(window, toCellAt: lastCell.address, displays: displays)
+            }
+        }
+        hideCellPicker()
     }
 
     // MARK: - Screen Sets

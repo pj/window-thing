@@ -15,9 +15,9 @@
 **Purpose**: Verify baseline compiles and runs; confirm 193-test baseline.
 
 - [ ] T001 Verify `swift build` succeeds and all 193 baseline tests pass — run `swift test`
-- [ ] T002 [P] Create `Sources/WindowThingCore/Services/CellIndexer.swift` as empty enum stub to unblock parallel foundational work
-- [ ] T003 [P] Create `Sources/WindowThingCore/Services/DisplayRegistry.swift` as empty class stub to unblock parallel foundational work
-- [ ] T004 [P] Create `Sources/WindowThingViewModel/WindowThumbnailCache.swift` as empty class stub to unblock parallel foundational work
+- [x] T002 [P] Create `Sources/WindowThingCore/Services/CellIndexer.swift` as empty enum stub to unblock parallel foundational work
+- [x] T003 [P] Create `Sources/WindowThingCore/Services/DisplayRegistry.swift` as empty class stub to unblock parallel foundational work
+- [-] T004 [P] Create `Sources/WindowThingViewModel/WindowThumbnailCache.swift` as empty class stub to unblock parallel foundational work
 
 ---
 

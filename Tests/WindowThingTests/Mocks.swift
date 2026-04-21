@@ -39,10 +39,12 @@ public class MockLayoutManager: LayoutManaging {
     public var layouts: [Layout] = []
     public var savedSetups: [SavedSetup] = []
     public var currentLayout: Layout?
+    public var lastUsedLayout: Layout?
 
     // Call tracking
     public var appliedLayouts: [Layout] = []
     public var updatedLayouts: [Layout] = []
+    public var movedWindows: [(Window, CellAddress)] = []
 
     public init() {}
 
@@ -53,6 +55,7 @@ public class MockLayoutManager: LayoutManaging {
     public func applyLayout(_ layout: Layout) {
         appliedLayouts.append(layout)
         currentLayout = layout
+        lastUsedLayout = layout
     }
 
     public func updateLayout(_ layout: Layout) {
@@ -64,6 +67,14 @@ public class MockLayoutManager: LayoutManaging {
 
     public func saveCurrentSetup(name: String) {}
     public func loadSetup(_ setup: SavedSetup) {}
+
+    public func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws {
+        movedWindows.append((window, address))
+    }
+
+    public func cellAddresses(for layout: Layout, displays: [Display]) -> [IndexedCell] {
+        CellIndexer.indexCells(layout: layout, displays: displays)
+    }
 }
 
 // MARK: - Test Helpers

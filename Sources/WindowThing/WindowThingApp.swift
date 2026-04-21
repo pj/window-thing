@@ -2,6 +2,7 @@ import SwiftUI
 import HotKey
 import os.log
 import WindowThingCore
+import WindowThingViewModel
 
 let logger = Logger(subsystem: "com.windowthing", category: "main")
 
@@ -40,9 +41,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     var overlayWindow: OverlayWindow?
+    var onboardingWindow: OnboardingWindow?
     var hotKey: HotKey?
     var reloadConfigHotKey: HotKey?
     var openConfigHotKey: HotKey?
+    var cellPickerHotKey: HotKey?
+    /// Retained cell hotkeys — releasing deallocates the Carbon shortcut.
+    var cellHotKeys: [String: HotKey] = [:]
 
     let windowManager = WindowManager.shared
     let configManager = ConfigManager.shared
@@ -61,6 +66,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Request accessibility permissions
         requestAccessibilityPermissions()
+
+        // Show first-run onboarding if not yet completed
+        if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+            showOnboarding()
+        }
 
         // Setup monitoring for automatic layout reconciliation
         setupMonitoring()
@@ -230,16 +240,83 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         layoutManager.loadLayouts(from: configManager.config)
         layoutManager.loadSavedSetups()
 
-        // Re-setup hotkey with new config
+        // Re-setup hotkeys with new config
         setupHotKey()
+        setupCellHotKeys()
+    }
+
+    // MARK: - Cell Hotkeys
+
+    private func setupCellHotKeys() {
+        // Release previous registrations
+        cellHotKeys = [:]
+        cellPickerHotKey = nil
+
+        let config = configManager.config
+
+        // Register per-cell hotkeys
+        if let cellHotKeyConfigs = config.cellHotKeys {
+            for (addressString, hotKeyConfig) in cellHotKeyConfigs {
+                guard let address = CellAddress(string: addressString),
+                      let key = Key(carbonKeyCode: hotKeyConfig.keyCode) else { continue }
+                let modifiers = modifierFlags(from: hotKeyConfig.modifiers)
+                let hk = HotKey(key: key, modifiers: modifiers)
+                hk.keyDownHandler = { [weak self] in
+                    self?.moveFocusedWindowToCell(address)
+                }
+                cellHotKeys[addressString] = hk
+            }
+        }
+
+        // Register cell-picker hotkey
+        if let pickerConfig = config.cellPickerHotKey,
+           let key = Key(carbonKeyCode: pickerConfig.keyCode) {
+            let modifiers = modifierFlags(from: pickerConfig.modifiers)
+            cellPickerHotKey = HotKey(key: key, modifiers: modifiers)
+            cellPickerHotKey?.keyDownHandler = { [weak self] in
+                self?.showCellPicker()
+            }
+        }
+    }
+
+    private func moveFocusedWindowToCell(_ address: CellAddress) {
+        guard let focusedApp = windowManager.getFocusedApplication() else { return }
+        let displays = windowManager.getDisplays()
+        let windows = windowManager.getWindows()
+        // Find the frontmost window of the focused app
+        let window = focusedApp.focusedWindow
+            ?? windows.first { $0.pid == focusedApp.id || $0.bundleId == focusedApp.bundleId }
+        guard let window else { return }
+        try? layoutManager.moveWindow(window, toCellAt: address, displays: displays)
+    }
+
+    private func showCellPicker() {
+        // Show the overlay if hidden; the picker is triggered from inside the overlay
+        showOverlay()
+        overlayWindow?.showCellPickerForFocusedWindow()
+    }
+
+    private func modifierFlags(from strings: [String]) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        for mod in strings {
+            switch mod.lowercased() {
+            case "command", "cmd": flags.insert(.command)
+            case "option", "opt", "alt": flags.insert(.option)
+            case "control", "ctrl": flags.insert(.control)
+            case "shift": flags.insert(.shift)
+            default: break
+            }
+        }
+        return flags
     }
 
     private func setupMonitoring() {
         debugLog(" Setting up monitoring")
 
-        // Set up callback for automatic layout reconciliation
+        // Set up callback for automatic layout reconciliation + thumbnail refresh
         windowManager.onCacheRefresh = { [weak self] in
             self?.layoutManager.reconcileCurrentLayout()
+            WindowThumbnailCache.shared.start()  // no-op if already polling
         }
 
         // Start monitoring display changes (disconnects/reconnects)
@@ -251,6 +328,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start polling for window changes
         windowManager.startPolling()
 
+        // Start thumbnail cache (requires Screen Recording permission — degrades gracefully)
+        let interval = configManager.config.thumbnailCaptureInterval ?? 3.0
+        WindowThumbnailCache.shared.updateInterval(interval)
+        WindowThumbnailCache.shared.start()
+
         debugLog(" Monitoring started")
     }
 
@@ -259,6 +341,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager.stopPolling()
         windowManager.stopMonitoringDisplayChanges()
         windowManager.stopMonitoringWorkspace()
+        WindowThumbnailCache.shared.stop()
     }
 
     func toggleOverlay() {
@@ -282,6 +365,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hideOverlay() {
         overlayWindow?.hideOverlay()
+    }
+
+    private func showOnboarding() {
+        if onboardingWindow == nil {
+            onboardingWindow = OnboardingWindow()
+        }
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func requestAccessibilityPermissions() {

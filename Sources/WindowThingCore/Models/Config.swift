@@ -35,6 +35,15 @@ public struct AppConfig: Codable, Sendable {
     public var minimumWindowWidth: CGFloat
     public var minimumWindowHeight: CGFloat
 
+    // Cell hotkeys: key is CellAddress string ("1", "2", "a", …)
+    public var cellHotKeys: [String: HotKeyConfig]?
+
+    // Hotkey to open the interactive cell picker. nil = no hotkey.
+    public var cellPickerHotKey: HotKeyConfig?
+
+    // How often (seconds) to refresh window thumbnails. Clamped to 2–5 at runtime.
+    public var thumbnailCaptureInterval: TimeInterval?
+
     public var minimumWindowSize: CGSize {
         CGSize(width: minimumWindowWidth, height: minimumWindowHeight)
     }
@@ -48,7 +57,10 @@ public struct AppConfig: Codable, Sendable {
         highlightColor: String,
         pollIntervalMs: Int,
         minimumWindowWidth: CGFloat,
-        minimumWindowHeight: CGFloat
+        minimumWindowHeight: CGFloat,
+        cellHotKeys: [String: HotKeyConfig]? = nil,
+        cellPickerHotKey: HotKeyConfig? = nil,
+        thumbnailCaptureInterval: TimeInterval? = nil
     ) {
         self.activationHotKey = activationHotKey
         self.layouts = layouts
@@ -59,6 +71,9 @@ public struct AppConfig: Codable, Sendable {
         self.pollIntervalMs = pollIntervalMs
         self.minimumWindowWidth = minimumWindowWidth
         self.minimumWindowHeight = minimumWindowHeight
+        self.cellHotKeys = cellHotKeys
+        self.cellPickerHotKey = cellPickerHotKey
+        self.thumbnailCaptureInterval = thumbnailCaptureInterval
     }
 
     public static var `default`: AppConfig {

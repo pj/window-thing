@@ -76,6 +76,27 @@ public class ConfigManager: ConfigProviding {
         config = newConfig
         saveConfig()
     }
+
+    /// Persist an updated layout list to disk, leaving all other config fields unchanged.
+    public func saveLayouts(_ layouts: [Layout]) {
+        var updated = config
+        updated = AppConfig(
+            activationHotKey: updated.activationHotKey,
+            layouts: layouts,
+            defaultLayoutName: updated.defaultLayoutName,
+            overlayOpacity: updated.overlayOpacity,
+            overlayBackgroundColor: updated.overlayBackgroundColor,
+            highlightColor: updated.highlightColor,
+            pollIntervalMs: updated.pollIntervalMs,
+            minimumWindowWidth: updated.minimumWindowWidth,
+            minimumWindowHeight: updated.minimumWindowHeight,
+            cellHotKeys: updated.cellHotKeys,
+            cellPickerHotKey: updated.cellPickerHotKey,
+            thumbnailCaptureInterval: updated.thumbnailCaptureInterval
+        )
+        config = updated
+        saveConfig()
+    }
 }
 
 

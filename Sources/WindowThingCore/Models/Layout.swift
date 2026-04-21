@@ -1,5 +1,67 @@
 import Foundation
 
+// MARK: - Cell Address
+
+/// A globally unique address for a leaf cell in the active layout, indexed
+/// left-to-right top-to-bottom across all monitors.
+/// Indices 1–35 are `.numeric`; overflow indices 36–61 are `.alpha` ('a'–'z').
+public enum CellAddress: Hashable, Sendable {
+    case numeric(Int)   // 1–35
+    case alpha(Character) // 'a'–'z'
+
+    /// Create from a 1-based sequential index.
+    public static func from(index: Int) -> CellAddress? {
+        if index >= 1 && index <= 35 {
+            return .numeric(index)
+        } else if index >= 36 && index <= 61 {
+            let letter = Character(UnicodeScalar(Int(("a" as UnicodeScalar).value) + index - 36)!)
+            return .alpha(letter)
+        }
+        return nil
+    }
+
+    /// String representation used in config ("1", "2", … "a", "b").
+    public var stringValue: String {
+        switch self {
+        case .numeric(let n): return "\(n)"
+        case .alpha(let c): return String(c)
+        }
+    }
+
+    /// Create from the string representation used in config.
+    public init?(string: String) {
+        guard !string.isEmpty else { return nil }
+        if let n = Int(string), n >= 1, n <= 35 {
+            self = .numeric(n)
+        } else if string.count == 1, let c = string.first, c.isLowercase, c.isLetter {
+            self = .alpha(c)
+        } else {
+            return nil
+        }
+    }
+}
+
+extension CellAddress: CustomStringConvertible {
+    public var description: String { stringValue }
+}
+
+extension CellAddress: Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let s = try container.decode(String.self)
+        guard let addr = CellAddress(string: s) else {
+            throw DecodingError.dataCorruptedError(in: container,
+                debugDescription: "Invalid CellAddress: '\(s)'")
+        }
+        self = addr
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(stringValue)
+    }
+}
+
 // MARK: - Layout Types (matching modal-commander structure)
 
 public enum LayoutType: String, Codable, Sendable {

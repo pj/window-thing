@@ -9,17 +9,22 @@ private class MockLayoutManager: LayoutManaging {
     var layouts: [Layout] = []
     var savedSetups: [SavedSetup] = []
     var currentLayout: Layout?
+    var lastUsedLayout: Layout?
     var appliedLayouts: [Layout] = []
     var updatedLayouts: [Layout] = []
 
     func loadLayouts(from config: AppConfig) { layouts = config.layouts }
-    func applyLayout(_ layout: Layout) { appliedLayouts.append(layout); currentLayout = layout }
+    func applyLayout(_ layout: Layout) { appliedLayouts.append(layout); currentLayout = layout; lastUsedLayout = layout }
     func updateLayout(_ layout: Layout) {
         updatedLayouts.append(layout)
         if let i = layouts.firstIndex(where: { $0.id == layout.id }) { layouts[i] = layout }
     }
     func saveCurrentSetup(name: String) {}
     func loadSetup(_ setup: SavedSetup) {}
+    func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws {}
+    func cellAddresses(for layout: Layout, displays: [Display]) -> [IndexedCell] {
+        CellIndexer.indexCells(layout: layout, displays: displays)
+    }
 }
 
 private class MockWindowManager: WindowManaging {
@@ -30,6 +35,16 @@ private class MockWindowManager: WindowManaging {
     func getWindows() -> [Window] { windows }
     func setWindowFrame(pid: pid_t, windowTitle: String?, frame: WindowFrame) -> Bool { true }
     func getFocusedApplication() -> Application? { focusedApplication }
+}
+
+private class MockConfigManager: ConfigProviding {
+    var config: AppConfig = .default
+    var configFilePath: URL = URL(fileURLWithPath: "/tmp/test-config.yaml")
+    var setupsFilePath: URL = URL(fileURLWithPath: "/tmp/test-setups.yaml")
+    var savedLayouts: [Layout] = []
+    func loadConfig() {}
+    func saveConfig() {}
+    func saveLayouts(_ layouts: [Layout]) { savedLayouts = layouts }
 }
 
 // MARK: - Fixtures
@@ -44,7 +59,8 @@ private func makeVM(layouts: [Layout] = []) -> (OverlayViewModel, MockLayoutMana
     let lm = MockLayoutManager()
     lm.layouts = layouts
     let wm = MockWindowManager()
-    let vm = OverlayViewModel(windowManager: wm, layoutManager: lm)
+    let cm = MockConfigManager()
+    let vm = OverlayViewModel(windowManager: wm, layoutManager: lm, configManager: cm)
     // Seed vm.layouts and originalLayouts so tests don't need to call refresh()
     // (refresh() hits NSWorkspace which is inappropriate for unit tests)
     vm.layouts = layouts

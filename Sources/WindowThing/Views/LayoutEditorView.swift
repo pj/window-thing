@@ -37,6 +37,11 @@ struct LayoutEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let layout = viewModel.editingLayout, layout.screenSets.count > 1 {
+                ScreenSetTabBar(viewModel: viewModel)
+                    .frame(height: 32)
+                Divider()
+            }
             canvasArea
             Divider()
             EditorBottomBar(viewModel: viewModel, onDismiss: onDismiss)
@@ -89,6 +94,7 @@ struct LayoutCanvasView: View {
         GeometryReader { geo in
             LayoutTileView(
                 node: rootNode,
+                rootNode: rootNode,
                 path: [],
                 selectedPath: selectedPath,
                 containerSize: geo.size,
@@ -106,10 +112,37 @@ struct LayoutCanvasView: View {
     }
 }
 
+// MARK: - Cell Index Helpers
+
+/// Count the number of leaf nodes that appear before `targetPath` in a depth-first traversal.
+private func leafCountBefore(_ targetPath: [Int], in node: LayoutNode) -> Int {
+    var count = 0
+    func visit(_ n: LayoutNode, _ currentPath: [Int]) -> Bool {
+        switch n.type {
+        case .columns:
+            for (i, col) in (n.columns ?? []).enumerated() {
+                if visit(col, currentPath + [i]) { return true }
+            }
+        case .rows:
+            for (i, row) in (n.rows ?? []).enumerated() {
+                if visit(row, currentPath + [i]) { return true }
+            }
+        default:
+            if currentPath == targetPath { return true }
+            count += 1
+        }
+        return false
+    }
+    _ = visit(node, [])
+    return count
+}
+
 // MARK: - Layout Tile View
 
 struct LayoutTileView: View {
     let node: LayoutNode
+    /// The full tree root, threaded down so leaf tiles can compute their cell index.
+    let rootNode: LayoutNode
     let path: [Int]
     let selectedPath: [Int]
     let containerSize: CGSize
@@ -148,6 +181,7 @@ struct LayoutTileView: View {
             ForEach(Array(frames.enumerated()), id: \.offset) { i, item in
                 LayoutTileView(
                     node: item.node,
+                    rootNode: rootNode,
                     path: path + [i],
                     selectedPath: selectedPath,
                     containerSize: item.frame.size,
@@ -240,6 +274,7 @@ struct LayoutTileView: View {
             ForEach(Array(frames.enumerated()), id: \.offset) { i, item in
                 LayoutTileView(
                     node: item.node,
+                    rootNode: rootNode,
                     path: path + [i],
                     selectedPath: selectedPath,
                     containerSize: item.frame.size,
@@ -325,27 +360,32 @@ struct LayoutTileView: View {
 
     // MARK: - Leaf Tile
 
+    @State private var tileHovering = false
+
     private var leafTile: some View {
         ZStack {
             tileBackground
             VStack(spacing: 0) {
-                // Controls always visible at the top of every tile
-                TileInlineControls(
-                    node: node,
-                    isRoot: path.isEmpty,
-                    runningApps: runningApps,
-                    runningWindows: runningWindows,
-                    onDelete: {
-                        onRootChanged(LayoutNode.empty(percentage: node.percentage ?? 100))
-                        onSelect([])
-                    },
-                    onNodeChanged: { newNode in onRootChanged(newNode) }
-                )
-                Divider()
+                if tileHovering {
+                    // Controls appear on hover
+                    TileInlineControls(
+                        node: node,
+                        isRoot: path.isEmpty,
+                        runningApps: runningApps,
+                        runningWindows: runningWindows,
+                        onDelete: {
+                            onRootChanged(LayoutNode.empty(percentage: node.percentage ?? 100))
+                            onSelect([])
+                        },
+                        onNodeChanged: { newNode in onRootChanged(newNode) }
+                    )
+                    Divider()
+                }
                 tileContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onHover { tileHovering = $0 }
         // Clip prevents controls from overflowing into adjacent tiles
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
@@ -421,13 +461,27 @@ struct LayoutTileView: View {
 
     @ViewBuilder
     private var tileContent: some View {
-        switch node.type {
-        case .stack:
-            stackVisual
-        case .pinned:
-            pinnedContent
-        default:
-            emptyContent
+        let leafIdx = leafCountBefore(path, in: rootNode)
+        let cellAddress = CellAddress.from(index: leafIdx + 1)
+        ZStack(alignment: .bottomTrailing) {
+            switch node.type {
+            case .stack:
+                stackVisual
+            case .pinned:
+                pinnedContent
+            default:
+                emptyContent
+            }
+            // Cell index badge
+            if let addr = cellAddress {
+                Text(addr.stringValue)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
+                    .padding(4)
+            }
         }
     }
 
@@ -851,6 +905,64 @@ struct RowDragHandle: View {
     }
 }
 
+// MARK: - Screen Set Tab Bar
+
+/// Tab bar showing one tab per screen set, with add/remove controls.
+struct ScreenSetTabBar: View {
+    @ObservedObject var viewModel: OverlayViewModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(Array((viewModel.editingLayout?.screenSets ?? []).enumerated()), id: \.offset) { i, _ in
+                        let selected = viewModel.selectedScreenSetIndex == i
+                        Button("Screen Set \(i + 1)") {
+                            viewModel.selectScreenSet(i)
+                        }
+                        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(selected ? Color.accentColor.opacity(0.08) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+
+            Spacer(minLength: 0)
+
+            // Remove current screen set (only if >1 exist)
+            if (viewModel.editingLayout?.screenSets.count ?? 0) > 1 {
+                Button {
+                    viewModel.removeScreenSet(at: viewModel.selectedScreenSetIndex)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .help("Remove this screen set")
+            }
+
+            // Add screen set
+            Button {
+                viewModel.addScreenSet()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .padding(.trailing, 8)
+            .help("Add screen set")
+        }
+        .background(.thinMaterial)
+    }
+}
+
 // MARK: - Editor Bottom Bar
 
 struct EditorBottomBar: View {
@@ -975,12 +1087,13 @@ struct HotkeyCapView: View {
 }
 
 #Preview("Layout Canvas — Three columns") {
-    LayoutCanvasView(
-        rootNode: .columns([
-            .pinned(app: "Xcode", percentage: 50),
-            .empty(percentage: 25),
-            .stackAll(percentage: 25)
-        ]),
+    let root = LayoutNode.columns([
+        .pinned(app: "Xcode", percentage: 50),
+        .empty(percentage: 25),
+        .stackAll(percentage: 25)
+    ])
+    return LayoutCanvasView(
+        rootNode: root,
         selectedPath: [0],
         runningApps: [RunningAppInfo(name: "Xcode", bundleId: "com.apple.dt.Xcode")],
         runningWindows: [],

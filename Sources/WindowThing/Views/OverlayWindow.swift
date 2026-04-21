@@ -63,6 +63,17 @@ class OverlayWindow: NSWindow {
         self.orderOut(nil)
     }
 
+    /// Show the overlay and immediately open the cell picker for the frontmost window.
+    func showCellPickerForFocusedWindow() {
+        if !isVisible { showOverlay() }
+        // Grab the focused window from WindowManager
+        let wm = WindowManager.shared
+        if let app = wm.getFocusedApplication(),
+           let window = app.focusedWindow ?? wm.getWindows().first(where: { $0.pid == app.id || $0.bundleId == app.bundleId }) {
+            viewModel.showCellPicker(for: window)
+        }
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override var undoManager: UndoManager? { viewModel.undoManager }
@@ -98,54 +109,109 @@ struct OverlayView: View {
                 LayoutEditorPanel(viewModel: viewModel, onDismiss: onDismiss)
             }
         }
+        .overlay {
+            if viewModel.isCellPickerVisible {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture { viewModel.hideCellPicker() }
+                CellPickerView(viewModel: viewModel, onDismiss: {})
+            }
+        }
     }
 
     // MARK: - Carousel
 
     private var layoutCarousel: some View {
-        HStack(spacing: 0) {
-            Button(action: { viewModel.carouselPageBack() }) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .opacity(viewModel.carouselCanGoBack ? 1 : 0)
-            .disabled(!viewModel.carouselCanGoBack)
-            .frame(width: 28)
-
-            HStack(spacing: 8) {
-                let start = viewModel.carouselOffset
-                let end = min(start + viewModel.carouselPageSize, viewModel.layouts.count)
-                ForEach(start..<end, id: \.self) { i in
-                    LayoutPickerCard(
-                        layout: viewModel.layouts[i],
-                        isSelected: viewModel.editingLayout?.id == viewModel.layouts[i].id,
-                        onSelect: { viewModel.selectLayout(at: i) }
-                    )
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Button(action: { viewModel.carouselPageBack() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                if (end - start) < viewModel.carouselPageSize {
-                    ForEach(0..<(viewModel.carouselPageSize - (end - start)), id: \.self) { _ in
-                        Spacer().frame(width: 118)
+                .buttonStyle(.plain)
+                .opacity(viewModel.carouselCanGoBack ? 1 : 0)
+                .disabled(!viewModel.carouselCanGoBack)
+                .frame(width: 28)
+
+                HStack(spacing: 8) {
+                    let start = viewModel.carouselOffset
+                    let end = min(start + viewModel.carouselPageSize, viewModel.layouts.count)
+                    ForEach(start..<end, id: \.self) { i in
+                        LayoutPickerCard(
+                            layout: viewModel.layouts[i],
+                            isSelected: viewModel.editingLayout?.id == viewModel.layouts[i].id,
+                            onSelect: { viewModel.selectLayout(at: i) }
+                        )
+                    }
+                    if (end - start) < viewModel.carouselPageSize {
+                        ForEach(0..<(viewModel.carouselPageSize - (end - start)), id: \.self) { _ in
+                            Spacer().frame(width: 118)
+                        }
                     }
                 }
-            }
-            .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
 
-            Button(action: { viewModel.carouselPageForward() }) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                Button(action: { viewModel.carouselPageForward() }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .opacity(viewModel.carouselCanGoForward ? 1 : 0)
+                .disabled(!viewModel.carouselCanGoForward)
+                .frame(width: 28)
             }
-            .buttonStyle(.plain)
-            .opacity(viewModel.carouselCanGoForward ? 1 : 0)
-            .disabled(!viewModel.carouselCanGoForward)
-            .frame(width: 28)
+            .padding(.horizontal, 8)
+            .padding(.top, 7)
+
+            Divider()
+            carouselActionBar
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .frame(height: 96)
+        .frame(height: 110)
         .background(.thinMaterial)
+    }
+
+    private var carouselActionBar: some View {
+        HStack(spacing: 6) {
+            Button {
+                viewModel.addLayout()
+            } label: {
+                Label("New", systemImage: "plus")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if viewModel.editingLayout != nil {
+                Button {
+                    if let layout = viewModel.editingLayout {
+                        viewModel.duplicateLayout(layout)
+                    }
+                } label: {
+                    Label("Duplicate", systemImage: "doc.on.doc")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(role: .destructive) {
+                    if let layout = viewModel.editingLayout {
+                        viewModel.deleteLayout(layout)
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(viewModel.layouts.count <= 1)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
     }
 
     // MARK: - No Layouts Placeholder

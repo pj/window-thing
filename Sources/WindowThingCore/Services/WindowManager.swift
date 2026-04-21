@@ -33,6 +33,7 @@ public class WindowManager: WindowManaging {
         }
 
         displayCache = displays
+        DisplayRegistry.shared.record(displays: displays)
         return displays
     }
 

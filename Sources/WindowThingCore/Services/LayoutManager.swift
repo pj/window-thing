@@ -1,6 +1,13 @@
 import Foundation
 import Yams
 
+// MARK: - Cell Move Error
+
+public enum CellMoveError: Error, Sendable {
+    case noActiveLayout
+    case addressNotFound(CellAddress)
+}
+
 // MARK: - Layout Calculation Result Types
 
 /// Represents a calculated window position
@@ -522,16 +529,27 @@ public class LayoutManager: LayoutManaging {
     public private(set) var savedSetups: [SavedSetup] = []
     public internal(set) var currentLayout: Layout?  // Allow internal modification for dynamic layout changes
 
-    private let windowManager: WindowManaging
+    /// The most recently applied layout. Persisted across app restarts via UserDefaults.
+    public private(set) var lastUsedLayout: Layout?
 
-    public init(windowManager: WindowManaging) {
+    private let windowManager: WindowManaging
+    private let defaults: UserDefaults
+
+    public init(windowManager: WindowManaging, userDefaults: UserDefaults = .standard) {
         self.windowManager = windowManager
+        self.defaults = userDefaults
     }
 
     // MARK: - Layout Loading
 
     public func loadLayouts(from config: AppConfig) {
         layouts = config.layouts
+
+        // Restore lastUsedLayout from UserDefaults
+        if let uuidString = defaults.string(forKey: "lastUsedLayoutId"),
+           let uuid = UUID(uuidString: uuidString) {
+            lastUsedLayout = layouts.first { $0.id == uuid }
+        }
 
         // Apply default layout if configured
         if let defaultName = config.defaultLayoutName,
@@ -563,6 +581,8 @@ public class LayoutManager: LayoutManaging {
         )
 
         currentLayout = layout
+        lastUsedLayout = layout
+        defaults.set(layout.id.uuidString, forKey: "lastUsedLayoutId")
 
         // Apply all placements
         for placement in placements {
@@ -572,6 +592,35 @@ public class LayoutManager: LayoutManaging {
                 frame: placement.targetFrame
             )
         }
+    }
+
+    // MARK: - Cell Movement
+
+    /// Move `window` to the cell identified by `address` in the current (or last-used) layout.
+    /// If no layout is active, auto-applies `lastUsedLayout` first.
+    /// Throws `CellMoveError.addressNotFound` if the address has no corresponding cell.
+    public func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws {
+        // Auto-apply last-used layout if nothing is current
+        if currentLayout == nil, let last = lastUsedLayout {
+            applyLayout(last)
+        }
+        guard let layout = currentLayout else {
+            throw CellMoveError.noActiveLayout
+        }
+        let cells = CellIndexer.indexCells(layout: layout, displays: displays)
+        guard let cell = cells.first(where: { $0.address == address }) else {
+            throw CellMoveError.addressNotFound(address)
+        }
+        _ = windowManager.setWindowFrame(
+            pid: window.pid,
+            windowTitle: window.title,
+            frame: cell.frame
+        )
+    }
+
+    /// Return the current set of indexed cells for `layout` on the given displays.
+    public func cellAddresses(for layout: Layout, displays: [Display]) -> [IndexedCell] {
+        CellIndexer.indexCells(layout: layout, displays: displays)
     }
 
     /// Re-apply the current layout (for automatic reconciliation)
