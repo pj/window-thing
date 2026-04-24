@@ -48,11 +48,15 @@ class OverlayWindow: NSWindow {
         self.level = .floating
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let hv = NSHostingView(rootView: OverlayView(viewModel: viewModel) { [weak self] in
+        // Use NSHostingController so the hosting view fills the full window
+        // area including the title bar zone — this is how Finder/Mail/Settings
+        // get the sidebar material behind the traffic lights.
+        let hc = NSHostingController(rootView: OverlayView(viewModel: viewModel) { [weak self] in
             self?.hideOverlay()
         })
-        hv.frame = NSRect(origin: .zero, size: windowRect.size)
-        self.contentView = hv
+        // Let the view fill the window rather than using intrinsic content size
+        hc.sizingOptions = []
+        self.contentViewController = hc
     }
 
     func showOverlay() {
@@ -85,12 +89,6 @@ class OverlayWindow: NSWindow {
             hideOverlay()
             return
         }
-        if let characters = event.charactersIgnoringModifiers {
-            if LayoutManager.shared.applyLayoutByQuickKey(characters) {
-                hideOverlay()
-                return
-            }
-        }
         super.keyDown(with: event)
     }
 }
@@ -104,13 +102,15 @@ struct OverlayView: View {
     var body: some View {
         HStack(spacing: 0) {
             LayoutSidebarView(viewModel: viewModel)
-            Divider()
             if viewModel.layouts.isEmpty {
                 noLayoutsView
             } else {
                 LayoutEditorPanel(viewModel: viewModel, onDismiss: onDismiss)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
         .overlay {
             if viewModel.isCellPickerVisible {
                 Color.black.opacity(0.25)
@@ -155,16 +155,20 @@ struct LayoutSidebarView: View {
     }
 
     var body: some View {
+        // Single rounded rectangle containing traffic lights, list, and toolbar —
+        // matching the Finder / Mail / System Settings sidebar on macOS 26.
         VStack(spacing: 0) {
-            // List with .sidebar style gives us the correct translucent material,
-            // accent-color selection when focused, gray when unfocused, and proper
-            // row sizing — all from the framework with no manual implementation.
+            // Traffic-light zone — the buttons sit over this area
+            Spacer().frame(height: 52)
+
+            // Layout list
             List(viewModel.layouts, id: \.id, selection: selectedId) { layout in
-                LayoutSidebarRow(layout: layout)
+                LayoutSidebarRow(layout: layout, viewModel: viewModel)
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
 
-            // Finder-style bottom toolbar: thin bar with +/− controls
+            // Bottom toolbar: +/−/duplicate
             Divider()
             HStack(spacing: 0) {
                 Button {
@@ -212,24 +216,25 @@ struct LayoutSidebarView: View {
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .frame(height: 24)
-            .background {
-                if #available(macOS 26, *) {
-                    Rectangle().glassEffect()
-                } else {
-                    Color(nsColor: .controlBackgroundColor)
-                }
-            }
         }
-        .frame(width: 220)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        )
+        .padding(8)
+        .frame(width: 236)
     }
 }
 
 // MARK: - Layout Sidebar Row
 
-// No isSelected/onSelect — List manages selection state and highlight rendering.
+// List manages selection state and highlight rendering.
 // Use only adaptive semantic colors so labels go white on the blue selected row.
 struct LayoutSidebarRow: View {
     let layout: WTLayout
+    @ObservedObject var viewModel: OverlayViewModel
 
     var body: some View {
         HStack(spacing: 10) {
@@ -272,6 +277,16 @@ struct LayoutSidebarRow: View {
             }
         }
         .padding(.vertical, 4)
+        .contextMenu {
+            Button("Duplicate") {
+                viewModel.duplicateLayout(layout)
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                viewModel.deleteLayout(layout)
+            }
+            .disabled(viewModel.layouts.count <= 1)
+        }
     }
 }
 

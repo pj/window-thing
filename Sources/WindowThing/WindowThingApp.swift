@@ -41,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     var overlayWindow: OverlayWindow?
+    var quickMoveWindow: QuickMoveWindow?
     var onboardingWindow: OnboardingWindow?
     var hotKey: HotKey?
     var reloadConfigHotKey: HotKey?
@@ -121,10 +122,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Show overlay
-        let showOverlayItem = NSMenuItem(title: "Show Overlay", action: #selector(showOverlayFromMenu), keyEquivalent: "")
-        showOverlayItem.target = self
-        menu.addItem(showOverlayItem)
+        let editorItem = NSMenuItem(title: "Open Editor…", action: #selector(showOverlayFromMenu), keyEquivalent: "")
+        editorItem.target = self
+        menu.addItem(editorItem)
+
+        let moveItem = NSMenuItem(title: "Move Current Window…", action: #selector(showQuickMoveFromMenu), keyEquivalent: "")
+        moveItem.target = self
+        menu.addItem(moveItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -145,18 +149,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let event = NSApp.currentEvent!
 
         if event.type == .rightMouseUp {
-            // Show menu on right click
             statusItem?.menu = nil
             updateStatusMenu()
             statusItem?.button?.performClick(nil)
         } else {
-            // Toggle overlay on left click
+            // Left click → editor overlay
             toggleOverlay()
         }
     }
 
     @objc private func showOverlayFromMenu() {
         showOverlay()
+    }
+
+    @objc private func showQuickMoveFromMenu() {
+        toggleQuickMove()
     }
 
     @objc private func applyLayout(_ sender: NSMenuItem) {
@@ -216,7 +223,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = HotKey(key: key, modifiers: modifiers)
         hotKey?.keyDownHandler = { [weak self] in
             debugLog(" Hotkey pressed!")
-            self?.toggleOverlay()
+            self?.toggleQuickMove()
         }
         debugLog(" Hotkey registered: \(String(describing: hotKey))")
 
@@ -342,6 +349,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowManager.stopMonitoringDisplayChanges()
         windowManager.stopMonitoringWorkspace()
         WindowThumbnailCache.shared.stop()
+    }
+
+    func toggleQuickMove() {
+        if let w = quickMoveWindow, w.isVisible {
+            w.hide()
+        } else {
+            if quickMoveWindow == nil { quickMoveWindow = QuickMoveWindow() }
+            quickMoveWindow?.show()
+        }
     }
 
     func toggleOverlay() {

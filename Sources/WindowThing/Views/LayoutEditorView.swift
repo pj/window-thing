@@ -37,7 +37,7 @@ struct LayoutEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorTopBar(viewModel: viewModel, onDismiss: onDismiss)
+            EditorTopBar(viewModel: viewModel)
             Divider()
             if let layout = viewModel.editingLayout, layout.screenSets.count > 1 {
                 ScreenSetTabBar(viewModel: viewModel)
@@ -966,12 +966,10 @@ struct ScreenSetTabBar: View {
 
 struct EditorTopBar: View {
     @ObservedObject var viewModel: OverlayViewModel
-    let onDismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             if let layout = viewModel.editingLayout {
-                // Hotkey cap
                 HotkeyCapView(
                     quickKey: Binding(
                         get: { layout.quickKey },
@@ -983,7 +981,6 @@ struct EditorTopBar: View {
                     )
                 )
 
-                // Inline title — plain style, looks like a heading until edited
                 TextField("Layout name", text: Binding(
                     get: { layout.name },
                     set: { name in
@@ -994,41 +991,6 @@ struct EditorTopBar: View {
                 ))
                 .textFieldStyle(.plain)
                 .font(.system(size: 15, weight: .semibold))
-            }
-
-            Spacer()
-
-            if #available(macOS 26, *) {
-                GlassEffectContainer {
-                    HStack(spacing: 8) {
-                        Button("Cancel") {
-                            viewModel.cancelEdits()
-                            onDismiss()
-                        }
-                        .buttonStyle(.glass)
-
-                        Button("Save") {
-                            viewModel.saveEdits()
-                            onDismiss()
-                        }
-                        .buttonStyle(.glassProminent)
-                        .tint(Color.accentColor)
-                        .keyboardShortcut(.return, modifiers: .command)
-                    }
-                }
-            } else {
-                Button("Cancel") {
-                    viewModel.cancelEdits()
-                    onDismiss()
-                }
-                .buttonStyle(.bordered)
-
-                Button("Save") {
-                    viewModel.saveEdits()
-                    onDismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
             }
         }
         .padding(.horizontal, 16)

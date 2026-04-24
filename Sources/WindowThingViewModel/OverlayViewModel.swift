@@ -152,9 +152,10 @@ public class OverlayViewModel: ObservableObject {
         }
         undoManager.setActionName("Resize")
         applyRootNodeUpdate(finalNode)
+        autoSave()
     }
 
-    // MARK: - Committed Edit (undo, no auto-save)
+    // MARK: - Committed Edit (undo + implicit save)
 
     public func commitEdit(_ node: LayoutNode, actionName: String = "Edit Layout") {
         let prevNode = editingRootNode
@@ -163,6 +164,7 @@ public class OverlayViewModel: ObservableObject {
         }
         undoManager.setActionName(actionName)
         applyRootNodeUpdate(node)
+        autoSave()
     }
 
     // MARK: - Layout Metadata
@@ -172,6 +174,23 @@ public class OverlayViewModel: ObservableObject {
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
             layouts[idx] = layout
         }
+        autoSaveMeta()
+    }
+
+    /// Persist and apply layout changes to open windows.
+    private func autoSave() {
+        guard let layout = editingLayout else { return }
+        layoutManager.updateLayout(layout)
+        layoutManager.applyLayout(layout)
+        configManager.saveLayouts(layouts)
+    }
+
+    /// Persist metadata-only changes (name, hotkey) without repositioning windows.
+    private func autoSaveMeta() {
+        if let layout = editingLayout {
+            layoutManager.updateLayout(layout)
+        }
+        configManager.saveLayouts(layouts)
     }
 
     // MARK: - Save / Cancel
