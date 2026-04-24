@@ -36,12 +36,14 @@ class OverlayWindow: NSWindow {
 
         super.init(
             contentRect: windowRect,
-            styleMask: [.titled, .closable, .miniaturizable],
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
         self.title = "WindowThing"
+        self.titleVisibility = .hidden
+        self.titlebarAppearsTransparent = true
         self.isReleasedWhenClosed = false
         self.level = .floating
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -100,8 +102,8 @@ struct OverlayView: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            layoutCarousel
+        HStack(spacing: 0) {
+            LayoutSidebarView(viewModel: viewModel)
             Divider()
             if viewModel.layouts.isEmpty {
                 noLayoutsView
@@ -119,101 +121,6 @@ struct OverlayView: View {
         }
     }
 
-    // MARK: - Carousel
-
-    private var layoutCarousel: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Button(action: { viewModel.carouselPageBack() }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .opacity(viewModel.carouselCanGoBack ? 1 : 0)
-                .disabled(!viewModel.carouselCanGoBack)
-                .frame(width: 28)
-
-                HStack(spacing: 8) {
-                    let start = viewModel.carouselOffset
-                    let end = min(start + viewModel.carouselPageSize, viewModel.layouts.count)
-                    ForEach(start..<end, id: \.self) { i in
-                        LayoutPickerCard(
-                            layout: viewModel.layouts[i],
-                            isSelected: viewModel.editingLayout?.id == viewModel.layouts[i].id,
-                            onSelect: { viewModel.selectLayout(at: i) }
-                        )
-                    }
-                    if (end - start) < viewModel.carouselPageSize {
-                        ForEach(0..<(viewModel.carouselPageSize - (end - start)), id: \.self) { _ in
-                            Spacer().frame(width: 118)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
-                Button(action: { viewModel.carouselPageForward() }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .opacity(viewModel.carouselCanGoForward ? 1 : 0)
-                .disabled(!viewModel.carouselCanGoForward)
-                .frame(width: 28)
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 7)
-
-            Divider()
-            carouselActionBar
-        }
-        .frame(height: 110)
-        .background(.thinMaterial)
-    }
-
-    private var carouselActionBar: some View {
-        HStack(spacing: 6) {
-            Button {
-                viewModel.addLayout()
-            } label: {
-                Label("New", systemImage: "plus")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            if viewModel.editingLayout != nil {
-                Button {
-                    if let layout = viewModel.editingLayout {
-                        viewModel.duplicateLayout(layout)
-                    }
-                } label: {
-                    Label("Duplicate", systemImage: "doc.on.doc")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-
-                Button(role: .destructive) {
-                    if let layout = viewModel.editingLayout {
-                        viewModel.deleteLayout(layout)
-                    }
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(viewModel.layouts.count <= 1)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-    }
-
     // MARK: - No Layouts Placeholder
 
     private var noLayoutsView: some View {
@@ -229,69 +136,145 @@ struct OverlayView: View {
     }
 }
 
-// MARK: - Layout Picker Card
+// MARK: - Layout Sidebar
 
-struct LayoutPickerCard: View {
-    let layout: WTLayout
-    let isSelected: Bool
-    let onSelect: () -> Void
+struct LayoutSidebarView: View {
+    @ObservedObject var viewModel: OverlayViewModel
 
-    private let cardWidth: CGFloat = 118
-    private let graphicHeight: CGFloat = 54
+    // Bridge ViewModel's editingLayout into a UUID? selection binding for List
+    private var selectedId: Binding<UUID?> {
+        Binding(
+            get: { viewModel.editingLayout?.id },
+            set: { id in
+                guard let id else { return }
+                if let idx = viewModel.layouts.firstIndex(where: { $0.id == id }) {
+                    viewModel.selectLayout(at: idx)
+                }
+            }
+        )
+    }
 
     var body: some View {
-        Button(action: onSelect) {
-            VStack(spacing: 5) {
-                // Graphic preview
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected
-                              ? Color.accentColor.opacity(0.08)
-                              : Color.secondary.opacity(0.05))
-                    if let screenSet = layout.screenSets.first {
-                        MultiMonitorPreviewView(
-                            screenConfig: screenSet,
-                            graphicSize: CGSize(width: cardWidth - 10, height: graphicHeight - 6)
-                        )
-                    }
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(
-                            isSelected ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.2),
-                            lineWidth: isSelected ? 1.5 : 0.5
-                        )
-                }
-                .frame(width: cardWidth, height: graphicHeight)
-
-                // Hotkey cap on LEFT, name on right
-                HStack(spacing: 5) {
-                    if let key = layout.quickKey {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color(nsColor: .controlBackgroundColor))
-                                .overlay(RoundedRectangle(cornerRadius: 3)
-                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
-                                .shadow(color: .secondary.opacity(0.35), radius: 0, x: 0, y: 1.5)
-                            Text(key.uppercased())
-                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.primary)
-                        }
-                        .frame(width: 18, height: 15)
-                    }
-                    Text(layout.name)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 0)
-                }
-                .frame(width: cardWidth)
+        VStack(spacing: 0) {
+            // List with .sidebar style gives us the correct translucent material,
+            // accent-color selection when focused, gray when unfocused, and proper
+            // row sizing — all from the framework with no manual implementation.
+            List(viewModel.layouts, id: \.id, selection: selectedId) { layout in
+                LayoutSidebarRow(layout: layout)
             }
-            .padding(.horizontal, 3)
-            .padding(.vertical, 3)
+            .listStyle(.sidebar)
+
+            // Finder-style bottom toolbar: thin bar with +/− controls
+            Divider()
+            HStack(spacing: 0) {
+                Button {
+                    viewModel.addLayout()
+                } label: {
+                    Image(systemName: "plus")
+                        .frame(width: 28, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .help("New Layout")
+
+                Divider().frame(height: 14)
+
+                Button(role: .destructive) {
+                    if let layout = viewModel.editingLayout {
+                        viewModel.deleteLayout(layout)
+                    }
+                } label: {
+                    Image(systemName: "minus")
+                        .frame(width: 28, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .disabled(viewModel.layouts.count <= 1)
+                .help("Delete Layout")
+
+                Divider().frame(height: 14)
+
+                Button {
+                    if let layout = viewModel.editingLayout {
+                        viewModel.duplicateLayout(layout)
+                    }
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .frame(width: 28, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .disabled(viewModel.editingLayout == nil)
+                .help("Duplicate Layout")
+
+                Spacer()
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .frame(height: 24)
+            .background {
+                if #available(macOS 26, *) {
+                    Rectangle().glassEffect()
+                } else {
+                    Color(nsColor: .controlBackgroundColor)
+                }
+            }
         }
-        .buttonStyle(.plain)
+        .frame(width: 220)
     }
 }
+
+// MARK: - Layout Sidebar Row
+
+// No isSelected/onSelect — List manages selection state and highlight rendering.
+// Use only adaptive semantic colors so labels go white on the blue selected row.
+struct LayoutSidebarRow: View {
+    let layout: WTLayout
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Thumbnail — display-proportioned preview acts as the row icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .separatorColor).opacity(0.6))
+                if let screenSet = layout.screenSets.first {
+                    MultiMonitorPreviewView(
+                        screenConfig: screenSet,
+                        graphicSize: CGSize(width: 46, height: 28)
+                    )
+                }
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(.separatorColor), lineWidth: 0.5)
+            }
+            .frame(width: 50, height: 32)
+
+            // Name — .primary adapts to white on selected blue row automatically
+            Text(layout.name)
+                .font(.system(size: 13))
+                .foregroundStyle(Color(.labelColor))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 4)
+
+            // Hotkey badge
+            if let key = layout.quickKey {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(.quaternaryLabelColor))
+                        .overlay(RoundedRectangle(cornerRadius: 3)
+                            .stroke(Color(.separatorColor), lineWidth: 0.5))
+                    Text(key.uppercased())
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(.secondaryLabelColor))
+                }
+                .frame(width: 18, height: 15)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 
 // MARK: - Compact Tile View
 
@@ -531,28 +514,9 @@ extension OverlayViewModel {
         .frame(width: 960, height: 640)
 }
 
-#Preview("Layout Picker Card") {
-    HStack(spacing: 12) {
-        LayoutPickerCard(
-            layout: WTLayout(name: "Coding", quickKey: "c", screenSets: [
-                ScreenConfig(layouts: [ScreenConfig.primaryKey: .columns([
-                    .pinned(app: "Xcode", percentage: 60),
-                    .empty(percentage: 40)
-                ])])
-            ]),
-            isSelected: true,
-            onSelect: {}
-        )
-        LayoutPickerCard(
-            layout: WTLayout(name: "Focus", quickKey: nil, screenSets: [
-                ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-            ]),
-            isSelected: false,
-            onSelect: {}
-        )
-    }
-    .padding()
-    .background(.regularMaterial)
+#Preview("Layout Sidebar") {
+    LayoutSidebarView(viewModel: .preview())
+        .frame(width: 220, height: 400)
 }
 
 #Preview("Compact Stack Tile") {

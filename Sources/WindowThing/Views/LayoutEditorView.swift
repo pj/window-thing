@@ -37,15 +37,14 @@ struct LayoutEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            EditorTopBar(viewModel: viewModel, onDismiss: onDismiss)
+            Divider()
             if let layout = viewModel.editingLayout, layout.screenSets.count > 1 {
                 ScreenSetTabBar(viewModel: viewModel)
                     .frame(height: 32)
                 Divider()
             }
             canvasArea
-            Divider()
-            EditorBottomBar(viewModel: viewModel, onDismiss: onDismiss)
-                .frame(height: 48)
         }
     }
 
@@ -963,15 +962,16 @@ struct ScreenSetTabBar: View {
     }
 }
 
-// MARK: - Editor Bottom Bar
+// MARK: - Editor Top Bar
 
-struct EditorBottomBar: View {
+struct EditorTopBar: View {
     @ObservedObject var viewModel: OverlayViewModel
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             if let layout = viewModel.editingLayout {
+                // Hotkey cap
                 HotkeyCapView(
                     quickKey: Binding(
                         get: { layout.quickKey },
@@ -983,6 +983,7 @@ struct EditorBottomBar: View {
                     )
                 )
 
+                // Inline title — plain style, looks like a heading until edited
                 TextField("Layout name", text: Binding(
                     get: { layout.name },
                     set: { name in
@@ -991,31 +992,54 @@ struct EditorBottomBar: View {
                         viewModel.updateLayoutMeta(updated)
                     }
                 ))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 13))
-                .frame(maxWidth: 200)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .semibold))
             }
 
             Spacer()
 
-            Button("Cancel") {
-                viewModel.cancelEdits()
-                onDismiss()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
+            if #available(macOS 26, *) {
+                GlassEffectContainer {
+                    HStack(spacing: 8) {
+                        Button("Cancel") {
+                            viewModel.cancelEdits()
+                            onDismiss()
+                        }
+                        .buttonStyle(.glass)
 
-            Button("Save") {
-                viewModel.saveEdits()
-                onDismiss()
+                        Button("Save") {
+                            viewModel.saveEdits()
+                            onDismiss()
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(Color.accentColor)
+                        .keyboardShortcut(.return, modifiers: .command)
+                    }
+                }
+            } else {
+                Button("Cancel") {
+                    viewModel.cancelEdits()
+                    onDismiss()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Save") {
+                    viewModel.saveEdits()
+                    onDismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .keyboardShortcut(.return, modifiers: .command)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .background(.thinMaterial)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background {
+            if #available(macOS 26, *) {
+                Rectangle().glassEffect()
+            } else {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
     }
 }
 

@@ -9,8 +9,8 @@ packer {
 
 variable "base_image" {
   type        = string
-  default     = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
-  description = "Base macOS image (Xcode CLI tools installed during setup)"
+  default     = "ghcr.io/cirruslabs/macos-sequoia-xcode:latest"
+  description = "Base macOS image with full Xcode (required for #Preview macro compilation)"
 }
 
 variable "vm_name" {
@@ -31,7 +31,7 @@ variable "memory_gb" {
 
 variable "disk_size_gb" {
   type    = number
-  default = 80
+  default = 150
 }
 
 variable "ssh_username" {
@@ -53,10 +53,9 @@ source "tart-cli" "windowthing" {
   disk_size_gb = var.disk_size_gb
   ssh_username = var.ssh_username
   ssh_password = var.ssh_password
-  ssh_timeout  = "600s"
+  ssh_timeout  = "1200s"
 
-  # Headless mode for CI
-  headless = false  # Run with GUI for first build to ensure it works
+  headless = true
 }
 
 build {
@@ -91,32 +90,6 @@ build {
       "  echo 'eval \"$(/opt/homebrew/bin/brew shellenv)\"' >> ~/.zprofile",
       "  eval \"$(/opt/homebrew/bin/brew shellenv)\"",
       "fi"
-    ]
-  }
-
-  # Install BetterDisplay for virtual monitor support
-  provisioner "shell" {
-    inline = [
-      "echo 'Installing BetterDisplay...'",
-      "eval \"$(/opt/homebrew/bin/brew shellenv)\"",
-      "brew install --cask betterdisplay || true"
-    ]
-  }
-
-  # Grant accessibility permissions (requires user interaction or MDM profile in production)
-  # For now, we'll note this needs manual setup or a TCC profile
-  provisioner "shell" {
-    inline = [
-      "echo 'NOTE: Accessibility permissions must be granted manually or via MDM profile'",
-      "echo 'Run: sudo tccutil reset Accessibility'",
-      "echo 'Then grant permissions to Terminal and WindowThing on first run'"
-    ]
-  }
-
-  # Create a working directory for WindowThing
-  provisioner "shell" {
-    inline = [
-      "mkdir -p ~/Projects"
     ]
   }
 
