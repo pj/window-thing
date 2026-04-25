@@ -10,6 +10,7 @@ public class OverlayViewModel: ObservableObject {
     @Published public var layouts: [Layout] = []
 
     // Editor state
+    @Published public var renamingLayoutId: UUID?
     @Published public var editingLayout: Layout?
     @Published public var selectedScreenSetIndex: Int = 0
     @Published public var selectedNodePath: [Int] = []
@@ -213,15 +214,17 @@ public class OverlayViewModel: ObservableObject {
 
     // MARK: - Layout CRUD
 
-    /// Create a new layout (single full-screen stackAll) and begin editing it.
+    /// Create a new layout (single full-screen stackAll), begin editing it,
+    /// and immediately enter rename mode so the user can type a name.
     public func addLayout() {
         let newLayout = Layout(
-            name: "New Layout",
+            name: "",
             screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
         )
         layouts.append(newLayout)
         configManager.saveLayouts(layouts)
         selectLayout(at: layouts.count - 1)
+        renamingLayoutId = newLayout.id
     }
 
     /// Duplicate `layout` with a new UUID and name suffix, insert after the original.

@@ -36,8 +36,6 @@ struct LayoutEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorTopBar(viewModel: viewModel)
-            Divider()
             if let layout = viewModel.editingLayout, layout.screenSets.count > 1 {
                 ScreenSetTabBar(viewModel: viewModel)
                     .frame(height: 32)
@@ -963,101 +961,6 @@ struct ScreenSetTabBar: View {
 
 // MARK: - Editor Top Bar
 
-struct EditorTopBar: View {
-    @ObservedObject var viewModel: OverlayViewModel
-
-    var body: some View {
-        HStack(spacing: 12) {
-            if let layout = viewModel.editingLayout {
-                HotkeyCapView(
-                    quickKey: Binding(
-                        get: { layout.quickKey },
-                        set: { newKey in
-                            var updated = layout
-                            updated.quickKey = newKey
-                            viewModel.updateLayoutMeta(updated)
-                        }
-                    )
-                )
-
-                TextField("Layout name", text: Binding(
-                    get: { layout.name },
-                    set: { name in
-                        var updated = layout
-                        updated.name = name
-                        viewModel.updateLayoutMeta(updated)
-                    }
-                ))
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .semibold))
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background {
-            if #available(macOS 26, *) {
-                Rectangle().glassEffect()
-            } else {
-                Color(nsColor: .windowBackgroundColor)
-            }
-        }
-    }
-}
-
-// MARK: - Hotkey Cap View
-
-struct HotkeyCapView: View {
-    @Binding var quickKey: String?
-    @State private var isEditing = false
-    @State private var editText = ""
-
-    var body: some View {
-        Group {
-            if isEditing {
-                TextField("", text: $editText)
-                    .multilineTextAlignment(.center)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .frame(width: 30)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { commitEdit() }
-                    .onChange(of: editText) { new in
-                        if new.count > 1 { editText = String(new.suffix(1)) }
-                    }
-                    .onExitCommand { isEditing = false }
-            } else {
-                keyCap
-            }
-        }
-    }
-
-    private var keyCap: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.secondary.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: Color.secondary.opacity(0.45), radius: 0, x: 0, y: 2)
-            Text(quickKey?.uppercased() ?? "–")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(quickKey != nil ? Color.primary : Color.secondary.opacity(0.4))
-        }
-        .frame(width: 30, height: 26)
-        .onTapGesture {
-            editText = quickKey ?? ""
-            isEditing = true
-        }
-        .onHover { h in if h { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
-        .help("Click to set quick-launch key")
-    }
-
-    private func commitEdit() {
-        isEditing = false
-        quickKey = editText.isEmpty ? nil : String(editText.lowercased().prefix(1))
-    }
-}
-
 // MARK: - Previews
 
 #if DEBUG
@@ -1119,12 +1022,4 @@ struct HotkeyCapView: View {
     .background(.regularMaterial)
 }
 
-#Preview("Hotkey Cap") {
-    HStack(spacing: 16) {
-        HotkeyCapView(quickKey: .constant("c"))
-        HotkeyCapView(quickKey: .constant(nil))
-    }
-    .padding()
-    .background(.regularMaterial)
-}
 #endif

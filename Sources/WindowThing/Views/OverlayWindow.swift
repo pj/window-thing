@@ -42,7 +42,9 @@ class OverlayWindow: NSWindow {
             defer: false
         )
 
-        self.title = "WindowThing"
+        self.title = ""
+        self.titleVisibility = .hidden
+        self.titlebarAppearsTransparent = true
         self.isReleasedWhenClosed = false
         self.level = .floating
         self.minSize = NSSize(width: 640, height: 400)
@@ -113,13 +115,23 @@ struct OverlayView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(viewModel.layouts, id: \.id, selection: selectedId) { layout in
-                LayoutSidebarRow(layout: layout, viewModel: viewModel)
+            List(selection: selectedId) {
+                ForEach(viewModel.layouts, id: \.id) { layout in
+                    LayoutSidebarRow(layout: layout, viewModel: viewModel)
+                }
+
+                // "New Layout" button row — like Apple Books' "+ New Collection"
+                Button {
+                    viewModel.addLayout()
+                } label: {
+                    Label("New Layout", systemImage: "plus")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
-            .safeAreaInset(edge: .bottom) {
-                sidebarToolbar
-            }
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .windowBackgroundColor))
         } detail: {
             if viewModel.layouts.isEmpty {
                 noLayoutsView
@@ -135,60 +147,6 @@ struct OverlayView: View {
                     .onTapGesture { viewModel.hideCellPicker() }
                 CellPickerView(viewModel: viewModel, onDismiss: {})
             }
-        }
-    }
-
-    // MARK: - Sidebar Toolbar
-
-    private var sidebarToolbar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 0) {
-                Button {
-                    viewModel.addLayout()
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 28, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .help("New Layout")
-
-                Divider().frame(height: 14)
-
-                Button(role: .destructive) {
-                    if let layout = viewModel.editingLayout {
-                        viewModel.deleteLayout(layout)
-                    }
-                } label: {
-                    Image(systemName: "minus")
-                        .frame(width: 28, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .disabled(viewModel.layouts.count <= 1)
-                .help("Delete Layout")
-
-                Divider().frame(height: 14)
-
-                Button {
-                    if let layout = viewModel.editingLayout {
-                        viewModel.duplicateLayout(layout)
-                    }
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .frame(width: 28, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderless)
-                .disabled(viewModel.editingLayout == nil)
-                .help("Duplicate Layout")
-
-                Spacer()
-            }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .frame(height: 24)
         }
     }
 
@@ -214,10 +172,16 @@ struct OverlayView: View {
 struct LayoutSidebarRow: View {
     let layout: WTLayout
     @ObservedObject var viewModel: OverlayViewModel
+    @FocusState private var nameFieldFocused: Bool
+    @State private var editingName: String = ""
+
+    private var isRenaming: Bool {
+        viewModel.renamingLayoutId == layout.id
+    }
 
     var body: some View {
         HStack(spacing: 10) {
-            // Thumbnail — display-proportioned preview acts as the row icon
+            // Thumbnail
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Color(nsColor: .separatorColor).opacity(0.6))
@@ -232,17 +196,35 @@ struct LayoutSidebarRow: View {
             }
             .frame(width: 50, height: 32)
 
-            // Name — .primary adapts to white on selected blue row automatically
-            Text(layout.name)
-                .font(.system(size: 13))
-                .foregroundStyle(Color(.labelColor))
-                .lineLimit(1)
-                .truncationMode(.tail)
+            // Name — inline TextField when renaming, Text otherwise
+            if isRenaming {
+                TextField("Layout Name", text: $editingName)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($nameFieldFocused)
+                    .onSubmit { commitRename() }
+                    .onChange(of: nameFieldFocused) { focused in
+                        if !focused { commitRename() }
+                    }
+                    .onAppear {
+                        editingName = layout.name
+                        // Delay focus to next run loop so the field is mounted
+                        DispatchQueue.main.async { nameFieldFocused = true }
+                    }
+            } else {
+                Text(layout.name.isEmpty ? "Untitled" : layout.name)
+                    .font(.system(size: 13))
+                    .foregroundStyle(layout.name.isEmpty
+                        ? Color(.secondaryLabelColor)
+                        : Color(.labelColor))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
 
             Spacer(minLength: 4)
 
             // Hotkey badge
-            if let key = layout.quickKey {
+            if let key = layout.quickKey, !isRenaming {
                 ZStack {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color(.quaternaryLabelColor))
@@ -257,6 +239,10 @@ struct LayoutSidebarRow: View {
         }
         .padding(.vertical, 4)
         .contextMenu {
+            Button("Rename") {
+                editingName = layout.name
+                viewModel.renamingLayoutId = layout.id
+            }
             Button("Duplicate") {
                 viewModel.duplicateLayout(layout)
             }
@@ -266,6 +252,16 @@ struct LayoutSidebarRow: View {
             }
             .disabled(viewModel.layouts.count <= 1)
         }
+        .tag(layout.id)
+    }
+
+    private func commitRename() {
+        guard isRenaming else { return }
+        let finalName = editingName.trimmingCharacters(in: .whitespaces)
+        var updated = layout
+        updated.name = finalName.isEmpty ? "Untitled" : finalName
+        viewModel.updateLayoutMeta(updated)
+        viewModel.renamingLayoutId = nil
     }
 }
 
