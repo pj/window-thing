@@ -33,7 +33,6 @@ extension LayoutType {
 
 struct LayoutEditorPanel: View {
     @ObservedObject var viewModel: OverlayViewModel
-    let onDismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1063,12 +1062,12 @@ struct HotkeyCapView: View {
 
 #if DEBUG
 #Preview("Full Overlay") {
-    OverlayView(viewModel: .preview(), onDismiss: {})
+    OverlayView(viewModel: .preview())
         .frame(width: 960, height: 640)
 }
 
 #Preview("Layout Editor Panel") {
-    LayoutEditorPanel(viewModel: .preview(), onDismiss: {})
+    LayoutEditorPanel(viewModel: .preview())
         .frame(width: 720, height: 480)
 }
 

@@ -19,48 +19,52 @@ extension UTType {
 // MARK: - OverlayWindow
 
 class OverlayWindow: NSWindow {
-    private let viewModel: OverlayViewModel
+    let viewModel: OverlayViewModel
 
     init() {
         viewModel = OverlayViewModel()
 
-        let screenBounds = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
-        let windowWidth: CGFloat = 960
-        let windowHeight: CGFloat = 640
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let visibleFrame = screen.visibleFrame
+        let windowWidth: CGFloat = 1000
+        let windowHeight: CGFloat = 680
         let windowRect = NSRect(
-            x: (screenBounds.width - windowWidth) / 2 + screenBounds.origin.x,
-            y: (screenBounds.height - windowHeight) / 2 + screenBounds.origin.y,
+            x: visibleFrame.midX - windowWidth / 2,
+            y: visibleFrame.midY - windowHeight / 2,
             width: windowWidth,
             height: windowHeight
         )
 
         super.init(
             contentRect: windowRect,
-            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
         self.title = "WindowThing"
-        self.titleVisibility = .hidden
-        self.titlebarAppearsTransparent = true
         self.isReleasedWhenClosed = false
         self.level = .floating
+        self.minSize = NSSize(width: 640, height: 400)
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        // Use NSHostingController so the hosting view fills the full window
-        // area including the title bar zone — this is how Finder/Mail/Settings
-        // get the sidebar material behind the traffic lights.
-        let hc = NSHostingController(rootView: OverlayView(viewModel: viewModel) { [weak self] in
-            self?.hideOverlay()
-        })
-        // Let the view fill the window rather than using intrinsic content size
+        let hc = NSHostingController(rootView: OverlayView(viewModel: viewModel))
         hc.sizingOptions = []
+        hc.preferredContentSize = NSSize(width: windowWidth, height: windowHeight)
         self.contentViewController = hc
+        // Re-apply frame after contentViewController may have resized the window
+        self.setFrame(windowRect, display: false)
     }
 
     func showOverlay() {
         viewModel.refresh()
+        // Re-center on the current main screen each time
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let vf = screen.visibleFrame
+        setFrameOrigin(NSPoint(
+            x: vf.midX - frame.width / 2,
+            y: vf.midY - frame.height / 2
+        ))
         self.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -72,7 +76,6 @@ class OverlayWindow: NSWindow {
     /// Show the overlay and immediately open the cell picker for the frontmost window.
     func showCellPickerForFocusedWindow() {
         if !isVisible { showOverlay() }
-        // Grab the focused window from WindowManager
         let wm = WindowManager.shared
         if let app = wm.getFocusedApplication(),
            let window = app.focusedWindow ?? wm.getWindows().first(where: { $0.pid == app.id || $0.bundleId == app.bundleId }) {
@@ -85,10 +88,7 @@ class OverlayWindow: NSWindow {
     override var undoManager: UndoManager? { viewModel.undoManager }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { // Escape
-            hideOverlay()
-            return
-        }
+        if event.keyCode == 53 { hideOverlay(); return }
         super.keyDown(with: event)
     }
 }
@@ -96,49 +96,6 @@ class OverlayWindow: NSWindow {
 // MARK: - OverlayView
 
 struct OverlayView: View {
-    @ObservedObject var viewModel: OverlayViewModel
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            LayoutSidebarView(viewModel: viewModel)
-            if viewModel.layouts.isEmpty {
-                noLayoutsView
-            } else {
-                LayoutEditorPanel(viewModel: viewModel, onDismiss: onDismiss)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay {
-            if viewModel.isCellPickerVisible {
-                Color.black.opacity(0.25)
-                    .ignoresSafeArea()
-                    .onTapGesture { viewModel.hideCellPicker() }
-                CellPickerView(viewModel: viewModel, onDismiss: {})
-            }
-        }
-    }
-
-    // MARK: - No Layouts Placeholder
-
-    private var noLayoutsView: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "rectangle.grid.2x2")
-                .font(.system(size: 32))
-                .foregroundStyle(.tertiary)
-            Text("No layouts configured")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-// MARK: - Layout Sidebar
-
-struct LayoutSidebarView: View {
     @ObservedObject var viewModel: OverlayViewModel
 
     // Bridge ViewModel's editingLayout into a UUID? selection binding for List
@@ -155,20 +112,36 @@ struct LayoutSidebarView: View {
     }
 
     var body: some View {
-        // Single rounded rectangle containing traffic lights, list, and toolbar —
-        // matching the Finder / Mail / System Settings sidebar on macOS 26.
-        VStack(spacing: 0) {
-            // Traffic-light zone — the buttons sit over this area
-            Spacer().frame(height: 52)
-
-            // Layout list
+        NavigationSplitView {
             List(viewModel.layouts, id: \.id, selection: selectedId) { layout in
                 LayoutSidebarRow(layout: layout, viewModel: viewModel)
             }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
+            .safeAreaInset(edge: .bottom) {
+                sidebarToolbar
+            }
+        } detail: {
+            if viewModel.layouts.isEmpty {
+                noLayoutsView
+            } else {
+                LayoutEditorPanel(viewModel: viewModel)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .overlay {
+            if viewModel.isCellPickerVisible {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture { viewModel.hideCellPicker() }
+                CellPickerView(viewModel: viewModel, onDismiss: {})
+            }
+        }
+    }
 
-            // Bottom toolbar: +/−/duplicate
+    // MARK: - Sidebar Toolbar
+
+    private var sidebarToolbar: some View {
+        VStack(spacing: 0) {
             Divider()
             HStack(spacing: 0) {
                 Button {
@@ -217,14 +190,20 @@ struct LayoutSidebarView: View {
             .foregroundStyle(.secondary)
             .frame(height: 24)
         }
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-        )
-        .padding(8)
-        .frame(width: 236)
+    }
+
+    // MARK: - No Layouts Placeholder
+
+    private var noLayoutsView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "rectangle.grid.2x2")
+                .font(.system(size: 32))
+                .foregroundStyle(.tertiary)
+            Text("No layouts configured")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -525,13 +504,8 @@ extension OverlayViewModel {
 }
 
 #Preview("Full Overlay") {
-    OverlayView(viewModel: .preview(), onDismiss: {})
+    OverlayView(viewModel: .preview())
         .frame(width: 960, height: 640)
-}
-
-#Preview("Layout Sidebar") {
-    LayoutSidebarView(viewModel: .preview())
-        .frame(width: 220, height: 400)
 }
 
 #Preview("Compact Stack Tile") {
