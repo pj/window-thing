@@ -42,6 +42,7 @@ struct LayoutEditorPanel: View {
                 Divider()
             }
             canvasArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -88,12 +89,16 @@ struct LayoutCanvasView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let insetH: CGFloat = 28
+            let insetV: CGFloat = 24
+            let tileW = max(0, geo.size.width - insetH * 2)
+            let tileH = max(0, geo.size.height - insetV * 2)
             LayoutTileView(
                 node: rootNode,
                 rootNode: rootNode,
                 path: [],
                 selectedPath: selectedPath,
-                containerSize: geo.size,
+                containerSize: CGSize(width: tileW, height: tileH),
                 runningApps: runningApps,
                 runningWindows: runningWindows,
                 onSelect: onSelect,
@@ -101,10 +106,9 @@ struct LayoutCanvasView: View {
                 onDragStarted: onDragStarted,
                 onLiveRootChange: onLiveRootChange
             )
-            .frame(width: geo.size.width, height: geo.size.height)
+            .frame(width: tileW, height: tileH)
+            .offset(x: insetH, y: insetV)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 }
@@ -218,15 +222,6 @@ struct LayoutTileView: View {
                             newCols[i] = newCols[i].withPercentage(lPct)
                             newCols[i + 1] = newCols[i + 1].withPercentage(rPct)
                             onRootChanged(node.withColumns(newCols))
-                        },
-                        onInsert: {
-                            let leftPct = cols[i].percentage ?? (100.0 / Double(cols.count))
-                            let half = max(5, leftPct / 2)
-                            var newCols = cols
-                            newCols[i] = newCols[i].withPercentage(half)
-                            newCols.insert(LayoutNode.empty(percentage: half), at: i + 1)
-                            onRootChanged(node.withColumns(newCols))
-                            onSelect(path + [i + 1])
                         }
                     )
                     .frame(width: 16, height: containerSize.height)
@@ -235,31 +230,6 @@ struct LayoutTileView: View {
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
-        .overlay(alignment: .leading) {
-            EdgeInsertHandle {
-                let firstPct = cols[0].percentage ?? (100.0 / Double(cols.count))
-                let half = max(5, firstPct / 2)
-                var newCols = cols
-                newCols[0] = newCols[0].withPercentage(firstPct - half)
-                newCols.insert(LayoutNode.empty(percentage: half), at: 0)
-                onRootChanged(node.withColumns(newCols))
-                onSelect(path + [0])
-            }
-            .frame(width: 16, height: containerSize.height)
-        }
-        .overlay(alignment: .trailing) {
-            EdgeInsertHandle {
-                let lastIdx = cols.count - 1
-                let lastPct = cols[lastIdx].percentage ?? (100.0 / Double(cols.count))
-                let half = max(5, lastPct / 2)
-                var newCols = cols
-                newCols[lastIdx] = newCols[lastIdx].withPercentage(lastPct - half)
-                newCols.append(LayoutNode.empty(percentage: half))
-                onRootChanged(node.withColumns(newCols))
-                onSelect(path + [newCols.count - 1])
-            }
-            .frame(width: 16, height: containerSize.height)
-        }
     }
 
     // MARK: - Rows
@@ -311,15 +281,6 @@ struct LayoutTileView: View {
                             newRows[i] = newRows[i].withPercentage(tPct)
                             newRows[i + 1] = newRows[i + 1].withPercentage(bPct)
                             onRootChanged(node.withRows(newRows))
-                        },
-                        onInsert: {
-                            let topPct = rs[i].percentage ?? (100.0 / Double(rs.count))
-                            let half = max(5, topPct / 2)
-                            var newRows = rs
-                            newRows[i] = newRows[i].withPercentage(half)
-                            newRows.insert(LayoutNode.empty(percentage: half), at: i + 1)
-                            onRootChanged(node.withRows(newRows))
-                            onSelect(path + [i + 1])
                         }
                     )
                     .frame(width: containerSize.width, height: 16)
@@ -328,36 +289,14 @@ struct LayoutTileView: View {
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
-        .overlay(alignment: .top) {
-            EdgeInsertHandle {
-                let firstPct = rs[0].percentage ?? (100.0 / Double(rs.count))
-                let half = max(5, firstPct / 2)
-                var newRows = rs
-                newRows[0] = newRows[0].withPercentage(firstPct - half)
-                newRows.insert(LayoutNode.empty(percentage: half), at: 0)
-                onRootChanged(node.withRows(newRows))
-                onSelect(path + [0])
-            }
-            .frame(width: containerSize.width, height: 16)
-        }
-        .overlay(alignment: .bottom) {
-            EdgeInsertHandle {
-                let lastIdx = rs.count - 1
-                let lastPct = rs[lastIdx].percentage ?? (100.0 / Double(rs.count))
-                let half = max(5, lastPct / 2)
-                var newRows = rs
-                newRows[lastIdx] = newRows[lastIdx].withPercentage(lastPct - half)
-                newRows.append(LayoutNode.empty(percentage: half))
-                onRootChanged(node.withRows(newRows))
-                onSelect(path + [newRows.count - 1])
-            }
-            .frame(width: containerSize.width, height: 16)
-        }
     }
 
     // MARK: - Leaf Tile
 
     @State private var tileHovering = false
+    @State private var splitAxis: SplitAxis? = nil
+    /// Normalized position (0–1) along the split axis, snapped to 5% increments.
+    @State private var splitPosition: CGFloat = 0.5
 
     private var leafTile: some View {
         ZStack {
@@ -381,8 +320,38 @@ struct LayoutTileView: View {
                 tileContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            // Split line overlay
+            if tileHovering, let axis = splitAxis {
+                SplitLineOverlay(axis: axis, position: splitPosition)
+                    .onTapGesture { performSplit(axis: axis) }
+            }
         }
-        .onHover { tileHovering = $0 }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                tileHovering = true
+                let normalizedX = location.x / max(containerSize.width, 1)
+                let normalizedY = location.y / max(containerSize.height, 1)
+
+                // Determine split axis based on mouse proximity to center lines
+                let aspectRatio = containerSize.width / max(containerSize.height, 1)
+                let distFromVerticalCenter = abs(normalizedX - 0.5)
+                let distFromHorizontalCenter = abs(normalizedY - 0.5)
+                let biasedVertDist = distFromVerticalCenter / max(aspectRatio, 0.5)
+                let biasedHorizDist = distFromHorizontalCenter * max(aspectRatio, 0.5)
+                let axis: SplitAxis = biasedVertDist < biasedHorizDist ? .vertical : .horizontal
+                splitAxis = axis
+
+                // Snap position to 5% increments, clamped to 10–90%
+                let raw = axis == .vertical ? normalizedX : normalizedY
+                let snapped = (raw * 20).rounded() / 20  // 5% steps
+                splitPosition = min(max(snapped, 0.1), 0.9)
+            case .ended:
+                tileHovering = false
+                splitAxis = nil
+            }
+        }
         // Clip prevents controls from overflowing into adjacent tiles
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
@@ -393,42 +362,18 @@ struct LayoutTileView: View {
             onSelect(path)
             return true
         }
-        // Root-level leaf: 4 edge handles to split into columns or rows
-        .overlay(alignment: .leading) {
-            if path.isEmpty {
-                EdgeInsertHandle {
-                    onRootChanged(LayoutNode.columns([.empty(percentage: 50), node.withPercentage(50)]))
-                    onSelect([0])
-                }
-                .frame(width: 16, height: containerSize.height)
-            }
-        }
-        .overlay(alignment: .trailing) {
-            if path.isEmpty {
-                EdgeInsertHandle {
-                    onRootChanged(LayoutNode.columns([node.withPercentage(50), .empty(percentage: 50)]))
-                    onSelect([1])
-                }
-                .frame(width: 16, height: containerSize.height)
-            }
-        }
-        .overlay(alignment: .top) {
-            if path.isEmpty {
-                EdgeInsertHandle {
-                    onRootChanged(LayoutNode.rows([.empty(percentage: 50), node.withPercentage(50)]))
-                    onSelect([0])
-                }
-                .frame(width: containerSize.width, height: 16)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if path.isEmpty {
-                EdgeInsertHandle {
-                    onRootChanged(LayoutNode.rows([node.withPercentage(50), .empty(percentage: 50)]))
-                    onSelect([1])
-                }
-                .frame(width: containerSize.width, height: 16)
-            }
+    }
+
+    private func performSplit(axis: SplitAxis) {
+        let leftPct = Double(splitPosition * 100)
+        let rightPct = 100.0 - leftPct
+        switch axis {
+        case .vertical:
+            onRootChanged(LayoutNode.columns([node.withPercentage(leftPct), .empty(percentage: rightPct)]))
+            onSelect(path + [1])
+        case .horizontal:
+            onRootChanged(LayoutNode.rows([node.withPercentage(leftPct), .empty(percentage: rightPct)]))
+            onSelect(path + [1])
         }
     }
 
@@ -726,31 +671,58 @@ struct TileInlineControls: View {
     }
 }
 
-// MARK: - Edge Insert Handle
+// MARK: - Split Axis
 
-/// A thin strip at the edge of a columns/rows layout that reveals a + button on hover.
-struct EdgeInsertHandle: View {
-    let onInsert: () -> Void
-    @State private var hovering = false
+enum SplitAxis {
+    case vertical, horizontal
+}
+
+// MARK: - Split Line Overlay
+
+/// Shows a dashed line with a scissor icon indicating where a tile will be split.
+struct SplitLineOverlay: View {
+    let axis: SplitAxis
+    /// Normalized position (0–1) along the split axis.
+    let position: CGFloat
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(hovering ? Color.accentColor.opacity(0.08) : Color.clear)
-                .contentShape(Rectangle())
-                .onHover { hovering = $0 }
-            Button(action: onInsert) {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 16, height: 16)
-                    Image(systemName: "plus")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
+        GeometryReader { geo in
+            let pos = axis == .vertical
+                ? CGPoint(x: geo.size.width * position, y: geo.size.height / 2)
+                : CGPoint(x: geo.size.width / 2, y: geo.size.height * position)
+
+            ZStack {
+                // Dashed split line
+                if axis == .vertical {
+                    Path { p in
+                        let x = geo.size.width * position
+                        p.move(to: CGPoint(x: x, y: 8))
+                        p.addLine(to: CGPoint(x: x, y: geo.size.height - 8))
+                    }
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .foregroundStyle(Color.accentColor.opacity(0.6))
+                } else {
+                    Path { p in
+                        let y = geo.size.height * position
+                        p.move(to: CGPoint(x: 8, y: y))
+                        p.addLine(to: CGPoint(x: geo.size.width - 8, y: y))
+                    }
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                    .foregroundStyle(Color.accentColor.opacity(0.6))
                 }
+
+                // Scissor icon at the split position
+                Image(systemName: "scissors")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .rotationEffect(axis == .vertical ? .degrees(90) : .degrees(0))
+                    .padding(4)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .position(pos)
             }
-            .buttonStyle(.plain)
         }
+        .allowsHitTesting(true)
+        .contentShape(Rectangle())
     }
 }
 
@@ -763,7 +735,6 @@ struct ColumnDragHandle: View {
     let onDragStarted: () -> Void
     let onChanging: (Double, Double) -> Void
     let onCommitted: (Double, Double) -> Void
-    let onInsert: () -> Void
 
     @State private var dragging = false
     @State private var hovering = false
@@ -773,58 +744,42 @@ struct ColumnDragHandle: View {
     @State private var lastRight: Double = 0
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(dragging ? Color.accentColor.opacity(0.2) : Color.clear)
-                .overlay(
-                    Rectangle()
-                        .fill(dragging ? Color.accentColor : Color.secondary.opacity(hovering ? 0.4 : 0.18))
-                        .frame(width: 2)
-                )
-                .contentShape(Rectangle())
-                .onHover { h in
-                    hovering = h
-                    if h { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 2)
-                        .onChanged { val in
-                            if !dragging {
-                                dragging = true
-                                startLeft = leftPct
-                                startRight = rightPct
-                                lastLeft = leftPct
-                                lastRight = rightPct
-                                onDragStarted()
-                            }
-                            let total = startLeft + startRight
-                            let deltaPct = Double(val.translation.width / containerWidth) * total
-                            let newLeft = min(max(5, startLeft + deltaPct), total - 5)
-                            let newRight = total - newLeft
-                            lastLeft = newLeft
-                            lastRight = newRight
-                            onChanging(newLeft, newRight)
-                        }
-                        .onEnded { _ in
-                            dragging = false
-                            onCommitted(lastLeft, lastRight)
-                        }
-                )
-
-            if !dragging {
-                Button(action: onInsert) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 16, height: 16)
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .buttonStyle(.plain)
+        Rectangle()
+            .fill(dragging ? Color.accentColor.opacity(0.2) : Color.clear)
+            .overlay(
+                Rectangle()
+                    .fill(dragging ? Color.accentColor : Color.secondary.opacity(hovering ? 0.4 : 0.18))
+                    .frame(width: 2)
+            )
+            .contentShape(Rectangle())
+            .onHover { h in
+                hovering = h
+                if h { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
             }
-        }
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { val in
+                        if !dragging {
+                            dragging = true
+                            startLeft = leftPct
+                            startRight = rightPct
+                            lastLeft = leftPct
+                            lastRight = rightPct
+                            onDragStarted()
+                        }
+                        let total = startLeft + startRight
+                        let deltaPct = Double(val.translation.width / containerWidth) * total
+                        let newLeft = min(max(5, startLeft + deltaPct), total - 5)
+                        let newRight = total - newLeft
+                        lastLeft = newLeft
+                        lastRight = newRight
+                        onChanging(newLeft, newRight)
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        onCommitted(lastLeft, lastRight)
+                    }
+            )
     }
 }
 
@@ -837,7 +792,6 @@ struct RowDragHandle: View {
     let onDragStarted: () -> Void
     let onChanging: (Double, Double) -> Void
     let onCommitted: (Double, Double) -> Void
-    let onInsert: () -> Void
 
     @State private var dragging = false
     @State private var hovering = false
@@ -847,58 +801,42 @@ struct RowDragHandle: View {
     @State private var lastBottom: Double = 0
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(dragging ? Color.accentColor.opacity(0.2) : Color.clear)
-                .overlay(
-                    Rectangle()
-                        .fill(dragging ? Color.accentColor : Color.secondary.opacity(hovering ? 0.4 : 0.18))
-                        .frame(height: 2)
-                )
-                .contentShape(Rectangle())
-                .onHover { h in
-                    hovering = h
-                    if h { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 2)
-                        .onChanged { val in
-                            if !dragging {
-                                dragging = true
-                                startTop = topPct
-                                startBottom = bottomPct
-                                lastTop = topPct
-                                lastBottom = bottomPct
-                                onDragStarted()
-                            }
-                            let total = startTop + startBottom
-                            let deltaPct = Double(val.translation.height / containerHeight) * total
-                            let newTop = min(max(5, startTop + deltaPct), total - 5)
-                            let newBottom = total - newTop
-                            lastTop = newTop
-                            lastBottom = newBottom
-                            onChanging(newTop, newBottom)
-                        }
-                        .onEnded { _ in
-                            dragging = false
-                            onCommitted(lastTop, lastBottom)
-                        }
-                )
-
-            if !dragging {
-                Button(action: onInsert) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor)
-                            .frame(width: 16, height: 16)
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .buttonStyle(.plain)
+        Rectangle()
+            .fill(dragging ? Color.accentColor.opacity(0.2) : Color.clear)
+            .overlay(
+                Rectangle()
+                    .fill(dragging ? Color.accentColor : Color.secondary.opacity(hovering ? 0.4 : 0.18))
+                    .frame(height: 2)
+            )
+            .contentShape(Rectangle())
+            .onHover { h in
+                hovering = h
+                if h { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
             }
-        }
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { val in
+                        if !dragging {
+                            dragging = true
+                            startTop = topPct
+                            startBottom = bottomPct
+                            lastTop = topPct
+                            lastBottom = bottomPct
+                            onDragStarted()
+                        }
+                        let total = startTop + startBottom
+                        let deltaPct = Double(val.translation.height / containerHeight) * total
+                        let newTop = min(max(5, startTop + deltaPct), total - 5)
+                        let newBottom = total - newTop
+                        lastTop = newTop
+                        lastBottom = newBottom
+                        onChanging(newTop, newBottom)
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        onCommitted(lastTop, lastBottom)
+                    }
+            )
     }
 }
 

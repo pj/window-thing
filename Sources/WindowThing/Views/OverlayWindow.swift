@@ -138,7 +138,7 @@ struct OverlayView: View {
             } else {
                 LayoutEditorPanel(viewModel: viewModel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
+                    .ignoresSafeArea(.container, edges: .top)
             }
         }
         .overlay {
