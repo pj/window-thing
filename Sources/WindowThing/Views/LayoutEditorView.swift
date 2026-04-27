@@ -103,7 +103,8 @@ struct LayoutCanvasView: View {
             )
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
         .background(Color(nsColor: .controlBackgroundColor))
     }
 }

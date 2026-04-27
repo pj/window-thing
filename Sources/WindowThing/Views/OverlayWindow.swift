@@ -138,6 +138,7 @@ struct OverlayView: View {
             } else {
                 LayoutEditorPanel(viewModel: viewModel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
             }
         }
         .overlay {
@@ -175,12 +176,20 @@ struct LayoutSidebarRow: View {
     @FocusState private var nameFieldFocused: Bool
     @State private var editingName: String = ""
 
+    @FocusState private var hotkeyFieldFocused: Bool
+    @State private var editingHotkey: String = ""
+    @State private var shakeOffset: CGFloat = 0
+
     private var isRenaming: Bool {
         viewModel.renamingLayoutId == layout.id
     }
 
+    private var isRecordingHotkey: Bool {
+        viewModel.recordingHotkeyLayoutId == layout.id
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             // Thumbnail
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
@@ -188,13 +197,13 @@ struct LayoutSidebarRow: View {
                 if let screenSet = layout.screenSets.first {
                     MultiMonitorPreviewView(
                         screenConfig: screenSet,
-                        graphicSize: CGSize(width: 46, height: 28)
+                        graphicSize: CGSize(width: 56, height: 36)
                     )
                 }
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color(.separatorColor), lineWidth: 0.5)
             }
-            .frame(width: 50, height: 32)
+            .frame(width: 60, height: 40)
 
             // Name — inline TextField when renaming, Text otherwise
             if isRenaming {
@@ -223,26 +232,71 @@ struct LayoutSidebarRow: View {
 
             Spacer(minLength: 4)
 
-            // Hotkey badge
-            if let key = layout.quickKey, !isRenaming {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(.quaternaryLabelColor))
-                        .overlay(RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color(.separatorColor), lineWidth: 0.5))
-                    Text(key.uppercased())
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color(.secondaryLabelColor))
+            // Hotkey — inline TextField when recording, static badge otherwise
+            if isRecordingHotkey {
+                TextField("", text: $editingHotkey)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 32)
+                    .focused($hotkeyFieldFocused)
+                    .onChange(of: editingHotkey) { newValue in
+                        // Force uppercase, take last character typed
+                        let cleaned = newValue.uppercased()
+                        let char = cleaned.count > 1 ? String(cleaned.suffix(1)) : cleaned
+                        // Check conflict immediately
+                        let key = char.trimmingCharacters(in: .whitespaces).lowercased()
+                        if !key.isEmpty,
+                           viewModel.layouts.contains(where: { $0.id != layout.id && $0.quickKey == key }) {
+                            NSSound.beep()
+                            editingHotkey = layout.quickKey?.uppercased() ?? ""
+                            triggerShake()
+                            return
+                        }
+                        if editingHotkey != char { editingHotkey = char }
+                    }
+                    .onSubmit { commitHotkey() }
+                    .onChange(of: hotkeyFieldFocused) { focused in
+                        if !focused { commitHotkey() }
+                    }
+                    .onAppear {
+                        editingHotkey = layout.quickKey?.uppercased() ?? ""
+                        DispatchQueue.main.async { hotkeyFieldFocused = true }
+                    }
+                    .offset(x: shakeOffset)
+                    .onExitCommand { viewModel.cancelRecordingHotkey() }
+            } else if !isRenaming {
+                if let key = layout.quickKey {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(.quaternaryLabelColor))
+                            .overlay(RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color(.separatorColor), lineWidth: 0.5))
+                        Text(key.uppercased())
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(.secondaryLabelColor))
+                    }
+                    .frame(width: 26, height: 22)
                 }
-                .frame(width: 18, height: 15)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .contextMenu {
             Button("Rename") {
                 editingName = layout.name
                 viewModel.renamingLayoutId = layout.id
             }
+            Button(layout.quickKey != nil ? "Change Hotkey" : "Set Hotkey") {
+                viewModel.startRecordingHotkey(for: layout.id)
+            }
+            if layout.quickKey != nil {
+                Button("Clear Hotkey") {
+                    var updated = layout
+                    updated.quickKey = nil
+                    viewModel.updateLayoutMeta(updated)
+                }
+            }
+            Divider()
             Button("Duplicate") {
                 viewModel.duplicateLayout(layout)
             }
@@ -262,6 +316,28 @@ struct LayoutSidebarRow: View {
         updated.name = finalName.isEmpty ? "Untitled" : finalName
         viewModel.updateLayoutMeta(updated)
         viewModel.renamingLayoutId = nil
+    }
+
+    private func commitHotkey() {
+        guard isRecordingHotkey else { return }
+        let key = editingHotkey.trimmingCharacters(in: .whitespaces).lowercased()
+        var updated = layout
+        updated.quickKey = key.isEmpty ? nil : String(key.prefix(1))
+        viewModel.updateLayoutMeta(updated)
+        viewModel.recordingHotkeyLayoutId = nil
+    }
+
+    private func triggerShake() {
+        withAnimation(.default) { shakeOffset = 6 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            withAnimation(.default) { shakeOffset = -6 }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+            withAnimation(.default) { shakeOffset = 4 }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+            withAnimation(.default) { shakeOffset = 0 }
+        }
     }
 }
 

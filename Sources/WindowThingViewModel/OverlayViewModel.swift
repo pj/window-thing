@@ -11,6 +11,7 @@ public class OverlayViewModel: ObservableObject {
 
     // Editor state
     @Published public var renamingLayoutId: UUID?
+    @Published public var recordingHotkeyLayoutId: UUID?
     @Published public var editingLayout: Layout?
     @Published public var selectedScreenSetIndex: Int = 0
     @Published public var selectedNodePath: [Int] = []
@@ -166,6 +167,18 @@ public class OverlayViewModel: ObservableObject {
         undoManager.setActionName(actionName)
         applyRootNodeUpdate(node)
         autoSave()
+    }
+
+    // MARK: - Hotkey Recording
+
+    /// Start recording a hotkey for the given layout.
+    public func startRecordingHotkey(for layoutId: UUID) {
+        recordingHotkeyLayoutId = layoutId
+    }
+
+    /// Cancel hotkey recording without changes.
+    public func cancelRecordingHotkey() {
+        recordingHotkeyLayoutId = nil
     }
 
     // MARK: - Layout Metadata
