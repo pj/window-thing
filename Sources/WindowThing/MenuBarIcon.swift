@@ -183,15 +183,17 @@ extension NSImage {
     }
 
     private static func drawColumns(_ children: [LayoutNode], in rect: NSRect) {
-        guard children.count > 1 else { return }
+        guard children.count > 1, rect.width > 1, rect.height > 1 else { return }
 
-        // Calculate column widths based on percentages
+        let defaultP = 100.0 / CGFloat(children.count)
+        let total = children.reduce(CGFloat(0)) { $0 + CGFloat($1.percentage ?? Double(defaultP)) }
+        guard total > 0 else { return }
+
         var x = rect.minX
         for (index, child) in children.enumerated() {
-            let percentage = child.percentage ?? (100.0 / CGFloat(children.count))
-            let width = rect.width * (percentage / 100.0)
+            let percentage = CGFloat(child.percentage ?? Double(defaultP))
+            let width = rect.width * (percentage / total)
 
-            // Draw vertical separator before each column except the first
             if index > 0 {
                 let separatorPath = NSBezierPath()
                 separatorPath.move(to: NSPoint(x: x, y: rect.minY))
@@ -200,24 +202,27 @@ extension NSImage {
                 separatorPath.stroke()
             }
 
-            // Recursively draw nested layouts
-            let columnRect = NSRect(x: x, y: rect.minY, width: width, height: rect.height)
-            drawLayoutNode(child, in: columnRect.insetBy(dx: 0.5, dy: 0))
+            if width > 2 {
+                let columnRect = NSRect(x: x, y: rect.minY, width: width, height: rect.height)
+                drawLayoutNode(child, in: columnRect.insetBy(dx: 0.5, dy: 0))
+            }
 
             x += width
         }
     }
 
     private static func drawRows(_ children: [LayoutNode], in rect: NSRect) {
-        guard children.count > 1 else { return }
+        guard children.count > 1, rect.width > 1, rect.height > 1 else { return }
 
-        // Calculate row heights based on percentages
+        let defaultP = 100.0 / CGFloat(children.count)
+        let total = children.reduce(CGFloat(0)) { $0 + CGFloat($1.percentage ?? Double(defaultP)) }
+        guard total > 0 else { return }
+
         var y = rect.maxY
         for (index, child) in children.enumerated() {
-            let percentage = child.percentage ?? (100.0 / CGFloat(children.count))
-            let height = rect.height * (percentage / 100.0)
+            let percentage = CGFloat(child.percentage ?? Double(defaultP))
+            let height = rect.height * (percentage / total)
 
-            // Draw horizontal separator before each row except the first
             if index > 0 {
                 let separatorPath = NSBezierPath()
                 separatorPath.move(to: NSPoint(x: rect.minX, y: y))
@@ -226,9 +231,10 @@ extension NSImage {
                 separatorPath.stroke()
             }
 
-            // Recursively draw nested layouts
-            let rowRect = NSRect(x: rect.minX, y: y - height, width: rect.width, height: height)
-            drawLayoutNode(child, in: rowRect.insetBy(dx: 0, dy: 0.5))
+            if height > 2 {
+                let rowRect = NSRect(x: rect.minX, y: y - height, width: rect.width, height: height)
+                drawLayoutNode(child, in: rowRect.insetBy(dx: 0, dy: 0.5))
+            }
 
             y -= height
         }

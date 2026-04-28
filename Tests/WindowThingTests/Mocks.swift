@@ -28,6 +28,11 @@ public class MockWindowManager: WindowManaging {
         return setWindowFrameReturnValue
     }
 
+    public func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool {
+        setWindowFrameCalls.append((pid: pid, windowTitle: nil, frame: frame))
+        return setWindowFrameReturnValue
+    }
+
     public func getFocusedApplication() -> Application? {
         return focusedApplication
     }

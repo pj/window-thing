@@ -588,7 +588,7 @@ public class LayoutManager: LayoutManaging {
         for placement in placements {
             _ = windowManager.setWindowFrame(
                 pid: placement.window.pid,
-                windowTitle: placement.window.title,
+                windowId: placement.window.id,
                 frame: placement.targetFrame
             )
         }
@@ -641,7 +641,7 @@ public class LayoutManager: LayoutManaging {
         for placement in placements {
             _ = windowManager.setWindowFrame(
                 pid: placement.window.pid,
-                windowTitle: placement.window.title,
+                windowId: placement.window.id,
                 frame: placement.targetFrame
             )
         }

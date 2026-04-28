@@ -3,6 +3,10 @@ import CoreGraphics
 import AppKit
 import ApplicationServices
 
+// Private AX API to get a window's CGWindowID from its AXUIElement
+@_silgen_name("_AXUIElementGetWindow")
+func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 public class WindowManager: WindowManaging {
     public static let shared = WindowManager()
 
@@ -174,13 +178,42 @@ public class WindowManager: WindowManaging {
             return false
         }
 
-        // Set position
+        return applyFrame(frame, to: window)
+    }
+
+    public func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool {
+        let appElement = AXUIElementCreateApplication(pid)
+
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+
+        guard result == .success,
+              let windows = windowsRef as? [AXUIElement] else {
+            return false
+        }
+
+        // Match by CGWindowID
+        for window in windows {
+            var wid: CGWindowID = 0
+            if _AXUIElementGetWindow(window, &wid) == .success, wid == windowId {
+                return applyFrame(frame, to: window)
+            }
+        }
+
+        // Fallback: match by title from cache
+        if let cached = windowCache.first(where: { $0.id == windowId }) {
+            return setWindowFrame(pid: pid, windowTitle: cached.title, frame: frame)
+        }
+
+        return false
+    }
+
+    private func applyFrame(_ frame: WindowFrame, to window: AXUIElement) -> Bool {
         var position = CGPoint(x: frame.x, y: frame.y)
         if let positionValue = AXValueCreate(.cgPoint, &position) {
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
         }
 
-        // Set size
         var size = CGSize(width: frame.width, height: frame.height)
         if let sizeValue = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)

@@ -75,6 +75,12 @@ class OverlayWindow: NSWindow {
         self.orderOut(nil)
     }
 
+    override func resignKey() {
+        super.resignKey()
+        // Close when the user clicks away
+        hideOverlay()
+    }
+
     /// Show the overlay and immediately open the cell picker for the frontmost window.
     func showCellPickerForFocusedWindow() {
         if !isVisible { showOverlay() }
@@ -99,25 +105,14 @@ class OverlayWindow: NSWindow {
 
 struct OverlayView: View {
     @ObservedObject var viewModel: OverlayViewModel
-
-    // Bridge ViewModel's editingLayout into a UUID? selection binding for List
-    private var selectedId: Binding<UUID?> {
-        Binding(
-            get: { viewModel.editingLayout?.id },
-            set: { id in
-                guard let id else { return }
-                if let idx = viewModel.layouts.firstIndex(where: { $0.id == id }) {
-                    viewModel.selectLayout(at: idx)
-                }
-            }
-        )
-    }
+    @State private var selectedId: UUID?
 
     var body: some View {
         NavigationSplitView {
-            List(selection: selectedId) {
+            List(selection: $selectedId) {
                 ForEach(viewModel.layouts, id: \.id) { layout in
                     LayoutSidebarRow(layout: layout, viewModel: viewModel)
+                        .tag(layout.id)
                 }
 
                 // "New Layout" button row — like Apple Books' "+ New Collection"
@@ -132,6 +127,16 @@ struct OverlayView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
             .scrollContentBackground(.hidden)
             .background(Color(nsColor: .windowBackgroundColor))
+            .onChange(of: selectedId) { newId in
+                guard let newId else { return }
+                guard let layout = viewModel.layouts.first(where: { $0.id == newId }) else { return }
+                viewModel.startEditing(layout)
+                viewModel.applyCurrentLayout()
+            }
+            .onChange(of: viewModel.editingLayout?.id) { newId in
+                if selectedId != newId { selectedId = newId }
+            }
+            .onAppear { selectedId = viewModel.editingLayout?.id }
         } detail: {
             if viewModel.layouts.isEmpty {
                 noLayoutsView
@@ -306,7 +311,6 @@ struct LayoutSidebarRow: View {
             }
             .disabled(viewModel.layouts.count <= 1)
         }
-        .tag(layout.id)
     }
 
     private func commitRename() {

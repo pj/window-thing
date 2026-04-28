@@ -81,12 +81,21 @@ public struct AppConfig: Codable, Sendable {
             activationHotKey: .default,
             layouts: [
                 Layout(
+                    name: "Fullscreen",
+                    quickKey: "z",
+                    screenSets: [
+                        ScreenConfig(layouts: [
+                            ScreenConfig.primaryKey: .stackAll()
+                        ])
+                    ]
+                ),
+                Layout(
                     name: "Half Split",
                     quickKey: "1",
                     screenSets: [
                         ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
-                                .empty(percentage: 50),
+                                .stackAll(percentage: 50),
                                 .empty(percentage: 50)
                             ])
                         ])
@@ -98,7 +107,7 @@ public struct AppConfig: Codable, Sendable {
                     screenSets: [
                         ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
-                                .empty(percentage: 33.33),
+                                .stackAll(percentage: 33.33),
                                 .empty(percentage: 33.33),
                                 .empty(percentage: 33.34)
                             ])
@@ -111,7 +120,7 @@ public struct AppConfig: Codable, Sendable {
                     screenSets: [
                         ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
-                                .empty(percentage: 70),
+                                .stackAll(percentage: 70),
                                 .rows([
                                     .empty(percentage: 50),
                                     .empty(percentage: 50)

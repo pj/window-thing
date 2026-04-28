@@ -89,7 +89,15 @@ public class OverlayViewModel: ObservableObject {
         } else if index >= carouselOffset + carouselPageSize {
             carouselOffset = max(0, index - carouselPageSize + 1)
         }
-        startEditing(layouts[index])
+        let layout = layouts[index]
+        startEditing(layout)
+        layoutManager.applyLayout(layout)
+    }
+
+    /// Apply the currently editing layout to windows without changing any selection state.
+    public func applyCurrentLayout() {
+        guard let layout = editingLayout else { return }
+        layoutManager.applyLayout(layout)
     }
 
     public func selectScreenSet(_ index: Int) {

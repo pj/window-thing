@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // MARK: - Window Management Protocol
 
@@ -6,6 +7,7 @@ public protocol WindowManaging {
     func getDisplays() -> [Display]
     func getWindows() -> [Window]
     func setWindowFrame(pid: pid_t, windowTitle: String?, frame: WindowFrame) -> Bool
+    func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool
     func getFocusedApplication() -> Application?
 }
 

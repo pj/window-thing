@@ -34,6 +34,7 @@ private class MockWindowManager: WindowManaging {
     func getDisplays() -> [Display] { displays }
     func getWindows() -> [Window] { windows }
     func setWindowFrame(pid: pid_t, windowTitle: String?, frame: WindowFrame) -> Bool { true }
+    func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool { true }
     func getFocusedApplication() -> Application? { focusedApplication }
 }
 

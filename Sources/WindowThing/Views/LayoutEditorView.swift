@@ -46,6 +46,14 @@ struct LayoutEditorPanel: View {
         }
     }
 
+    /// Aspect ratio of the display this layout targets (width / height).
+    private var displayAspectRatio: CGFloat {
+        // Use the primary display, or fall back to a typical 16:10 ratio
+        let primary = viewModel.displays.first(where: { $0.isMain }) ?? viewModel.displays.first
+        guard let d = primary, d.frame.height > 0 else { return 16.0 / 10.0 }
+        return d.frame.width / d.frame.height
+    }
+
     @ViewBuilder
     private var canvasArea: some View {
         if let rootNode = viewModel.editingRootNode {
@@ -54,6 +62,7 @@ struct LayoutEditorPanel: View {
                 selectedPath: viewModel.selectedNodePath,
                 runningApps: viewModel.runningApps,
                 runningWindows: viewModel.runningWindows,
+                displayAspectRatio: displayAspectRatio,
                 onSelect: { path in viewModel.selectedNodePath = path },
                 onRootChanged: { newRoot in viewModel.commitEdit(newRoot) },
                 onDragStarted: { viewModel.captureDragSnapshot() },
@@ -82,34 +91,85 @@ struct LayoutCanvasView: View {
     let selectedPath: [Int]
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
+    let displayAspectRatio: CGFloat
     let onSelect: ([Int]) -> Void
     let onRootChanged: (LayoutNode) -> Void
     let onDragStarted: () -> Void
     let onLiveRootChange: (LayoutNode) -> Void
 
+    private let bezelWidth: CGFloat = 10
+    private let bezelRadius: CGFloat = 12
+
     var body: some View {
         GeometryReader { geo in
-            let insetH: CGFloat = 28
-            let insetV: CGFloat = 24
-            let tileW = max(0, geo.size.width - insetH * 2)
-            let tileH = max(0, geo.size.height - insetV * 2)
-            LayoutTileView(
-                node: rootNode,
-                rootNode: rootNode,
-                path: [],
-                selectedPath: selectedPath,
-                containerSize: CGSize(width: tileW, height: tileH),
-                runningApps: runningApps,
-                runningWindows: runningWindows,
-                onSelect: onSelect,
-                onRootChanged: onRootChanged,
-                onDragStarted: onDragStarted,
-                onLiveRootChange: onLiveRootChange
-            )
-            .frame(width: tileW, height: tileH)
-            .offset(x: insetH, y: insetV)
+            let availW = geo.size.width - 56
+            let availH = geo.size.height - 48
+            let canvasSize = fittedSize(aspect: displayAspectRatio, within: CGSize(width: availW, height: availH))
+            let bezelW = canvasSize.width + bezelWidth * 2
+            let bezelH = canvasSize.height + bezelWidth * 2
+
+            ZStack {
+                // Outer border
+                RoundedRectangle(cornerRadius: bezelRadius + 1)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color(white: 0.35), Color(white: 0.18)],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+                    .frame(width: bezelW + 2, height: bezelH + 2)
+
+                // Bezel fill
+                RoundedRectangle(cornerRadius: bezelRadius)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(white: 0.22), Color(white: 0.15)],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                    .frame(width: bezelW, height: bezelH)
+
+                // Screen area
+                LayoutTileView(
+                    node: rootNode,
+                    rootNode: rootNode,
+                    path: [],
+                    selectedPath: selectedPath,
+                    containerSize: canvasSize,
+                    runningApps: runningApps,
+                    runningWindows: runningWindows,
+                    onSelect: onSelect,
+                    onRootChanged: onRootChanged,
+                    onDragStarted: onDragStarted,
+                    onLiveRootChange: onLiveRootChange
+                )
+                .frame(width: canvasSize.width, height: canvasSize.height)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.black.opacity(0.5), lineWidth: 0.5)
+                )
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    /// Fit a rectangle with the given aspect ratio inside the available space.
+    private func fittedSize(aspect: CGFloat, within available: CGSize) -> CGSize {
+        guard available.width > 0, available.height > 0, aspect > 0 else {
+            return available
+        }
+        let availableAspect = available.width / available.height
+        if aspect > availableAspect {
+            // Width-constrained
+            return CGSize(width: available.width, height: available.width / aspect)
+        } else {
+            // Height-constrained
+            return CGSize(width: available.height * aspect, height: available.height)
+        }
     }
 }
 
@@ -177,15 +237,15 @@ struct LayoutTileView: View {
 
     @ViewBuilder
     private func columnsLayout(_ cols: [LayoutNode]) -> some View {
-        let frames = childFrames(children: cols, size: containerSize, isColumns: true)
-        ZStack(alignment: .topLeading) {
-            ForEach(Array(frames.enumerated()), id: \.offset) { i, item in
+        let widths = childSizes(children: cols, totalLength: containerSize.width)
+        HStack(spacing: 0) {
+            ForEach(Array(cols.enumerated()), id: \.offset) { i, col in
                 LayoutTileView(
-                    node: item.node,
+                    node: col,
                     rootNode: rootNode,
                     path: path + [i],
                     selectedPath: selectedPath,
-                    containerSize: item.frame.size,
+                    containerSize: CGSize(width: widths[i], height: containerSize.height),
                     runningApps: runningApps,
                     runningWindows: runningWindows,
                     onSelect: onSelect,
@@ -201,50 +261,62 @@ struct LayoutTileView: View {
                         onLiveRootChange(node.withColumns(newCols))
                     }
                 )
-                .frame(width: item.frame.width, height: item.frame.height)
-                .offset(x: item.frame.minX, y: item.frame.minY)
-
-                if i < frames.count - 1 {
-                    let defaultP = 100.0 / Double(cols.count)
-                    ColumnDragHandle(
-                        leftPct: cols[i].percentage ?? defaultP,
-                        rightPct: cols[i + 1].percentage ?? defaultP,
-                        containerWidth: containerSize.width,
-                        onDragStarted: onDragStarted,
-                        onChanging: { lPct, rPct in
-                            var newCols = cols
-                            newCols[i] = newCols[i].withPercentage(lPct)
-                            newCols[i + 1] = newCols[i + 1].withPercentage(rPct)
-                            onLiveRootChange(node.withColumns(newCols))
-                        },
-                        onCommitted: { lPct, rPct in
-                            var newCols = cols
-                            newCols[i] = newCols[i].withPercentage(lPct)
-                            newCols[i + 1] = newCols[i + 1].withPercentage(rPct)
-                            onRootChanged(node.withColumns(newCols))
-                        }
-                    )
-                    .frame(width: 16, height: containerSize.height)
-                    .offset(x: item.frame.maxX - 8, y: 0)
-                }
+                .frame(width: widths[i], height: containerSize.height)
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
+        .overlay {
+            // Drag handles overlaid at column boundaries
+            let offsets = columnHandleOffsets(widths: widths)
+            ForEach(Array(offsets.enumerated()), id: \.offset) { i, xPos in
+                let defaultP = 100.0 / Double(cols.count)
+                ColumnDragHandle(
+                    leftPct: cols[i].percentage ?? defaultP,
+                    rightPct: cols[i + 1].percentage ?? defaultP,
+                    containerWidth: containerSize.width,
+                    onDragStarted: onDragStarted,
+                    onChanging: { lPct, rPct in
+                        var newCols = cols
+                        newCols[i] = newCols[i].withPercentage(lPct)
+                        newCols[i + 1] = newCols[i + 1].withPercentage(rPct)
+                        onLiveRootChange(node.withColumns(newCols))
+                    },
+                    onCommitted: { lPct, rPct in
+                        var newCols = cols
+                        newCols[i] = newCols[i].withPercentage(lPct)
+                        newCols[i + 1] = newCols[i + 1].withPercentage(rPct)
+                        onRootChanged(node.withColumns(newCols))
+                    }
+                )
+                .frame(width: 12, height: containerSize.height)
+                .position(x: xPos, y: containerSize.height / 2)
+            }
+        }
+    }
+
+    private func columnHandleOffsets(widths: [CGFloat]) -> [CGFloat] {
+        var offsets: [CGFloat] = []
+        var accum: CGFloat = 0
+        for i in 0..<(widths.count - 1) {
+            accum += widths[i]
+            offsets.append(accum)
+        }
+        return offsets
     }
 
     // MARK: - Rows
 
     @ViewBuilder
     private func rowsLayout(_ rs: [LayoutNode]) -> some View {
-        let frames = childFrames(children: rs, size: containerSize, isColumns: false)
-        ZStack(alignment: .topLeading) {
-            ForEach(Array(frames.enumerated()), id: \.offset) { i, item in
+        let heights = childSizes(children: rs, totalLength: containerSize.height)
+        VStack(spacing: 0) {
+            ForEach(Array(rs.enumerated()), id: \.offset) { i, row in
                 LayoutTileView(
-                    node: item.node,
+                    node: row,
                     rootNode: rootNode,
                     path: path + [i],
                     selectedPath: selectedPath,
-                    containerSize: item.frame.size,
+                    containerSize: CGSize(width: containerSize.width, height: heights[i]),
                     runningApps: runningApps,
                     runningWindows: runningWindows,
                     onSelect: onSelect,
@@ -260,35 +332,47 @@ struct LayoutTileView: View {
                         onLiveRootChange(node.withRows(newRows))
                     }
                 )
-                .frame(width: item.frame.width, height: item.frame.height)
-                .offset(x: item.frame.minX, y: item.frame.minY)
-
-                if i < frames.count - 1 {
-                    let defaultP = 100.0 / Double(rs.count)
-                    RowDragHandle(
-                        topPct: rs[i].percentage ?? defaultP,
-                        bottomPct: rs[i + 1].percentage ?? defaultP,
-                        containerHeight: containerSize.height,
-                        onDragStarted: onDragStarted,
-                        onChanging: { tPct, bPct in
-                            var newRows = rs
-                            newRows[i] = newRows[i].withPercentage(tPct)
-                            newRows[i + 1] = newRows[i + 1].withPercentage(bPct)
-                            onLiveRootChange(node.withRows(newRows))
-                        },
-                        onCommitted: { tPct, bPct in
-                            var newRows = rs
-                            newRows[i] = newRows[i].withPercentage(tPct)
-                            newRows[i + 1] = newRows[i + 1].withPercentage(bPct)
-                            onRootChanged(node.withRows(newRows))
-                        }
-                    )
-                    .frame(width: containerSize.width, height: 16)
-                    .offset(x: 0, y: item.frame.maxY - 8)
-                }
+                .frame(width: containerSize.width, height: heights[i])
             }
         }
         .frame(width: containerSize.width, height: containerSize.height)
+        .overlay {
+            // Drag handles overlaid at row boundaries
+            let offsets = rowHandleOffsets(heights: heights)
+            ForEach(Array(offsets.enumerated()), id: \.offset) { i, yPos in
+                let defaultP = 100.0 / Double(rs.count)
+                RowDragHandle(
+                    topPct: rs[i].percentage ?? defaultP,
+                    bottomPct: rs[i + 1].percentage ?? defaultP,
+                    containerHeight: containerSize.height,
+                    onDragStarted: onDragStarted,
+                    onChanging: { tPct, bPct in
+                        var newRows = rs
+                        newRows[i] = newRows[i].withPercentage(tPct)
+                        newRows[i + 1] = newRows[i + 1].withPercentage(bPct)
+                        onLiveRootChange(node.withRows(newRows))
+                    },
+                    onCommitted: { tPct, bPct in
+                        var newRows = rs
+                        newRows[i] = newRows[i].withPercentage(tPct)
+                        newRows[i + 1] = newRows[i + 1].withPercentage(bPct)
+                        onRootChanged(node.withRows(newRows))
+                    }
+                )
+                .frame(width: containerSize.width, height: 12)
+                .position(x: containerSize.width / 2, y: yPos)
+            }
+        }
+    }
+
+    private func rowHandleOffsets(heights: [CGFloat]) -> [CGFloat] {
+        var offsets: [CGFloat] = []
+        var accum: CGFloat = 0
+        for i in 0..<(heights.count - 1) {
+            accum += heights[i]
+            offsets.append(accum)
+        }
+        return offsets
     }
 
     // MARK: - Leaf Tile
@@ -403,27 +487,13 @@ struct LayoutTileView: View {
 
     @ViewBuilder
     private var tileContent: some View {
-        let leafIdx = leafCountBefore(path, in: rootNode)
-        let cellAddress = CellAddress.from(index: leafIdx + 1)
-        ZStack(alignment: .bottomTrailing) {
-            switch node.type {
-            case .stack:
-                stackVisual
-            case .pinned:
-                pinnedContent
-            default:
-                emptyContent
-            }
-            // Cell index badge
-            if let addr = cellAddress {
-                Text(addr.stringValue)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
-                    .padding(4)
-            }
+        switch node.type {
+        case .stack:
+            stackVisual
+        case .pinned:
+            pinnedContent
+        default:
+            emptyContent
         }
     }
 
@@ -479,25 +549,14 @@ struct LayoutTileView: View {
         .padding(6)
     }
 
-    // MARK: - Frame Helpers
+    // MARK: - Size Helpers
 
-    private func childFrames(children: [LayoutNode], size: CGSize, isColumns: Bool) -> [(node: LayoutNode, frame: CGRect)] {
+    /// Returns the pixel sizes for each child along the split axis.
+    private func childSizes(children: [LayoutNode], totalLength: CGFloat) -> [CGFloat] {
         let defaultP = children.isEmpty ? 100.0 : 100.0 / Double(children.count)
         let total = children.reduce(0.0) { $0 + ($1.percentage ?? defaultP) }
-        var offset: CGFloat = 0
         return children.map { child in
-            let fraction = CGFloat((child.percentage ?? defaultP) / total)
-            if isColumns {
-                let w = size.width * fraction
-                let frame = CGRect(x: offset, y: 0, width: w, height: size.height)
-                offset += w
-                return (child, frame)
-            } else {
-                let h = size.height * fraction
-                let frame = CGRect(x: 0, y: offset, width: size.width, height: h)
-                offset += h
-                return (child, frame)
-            }
+            CGFloat((child.percentage ?? defaultP) / total) * totalLength
         }
     }
 }
@@ -515,7 +574,8 @@ struct TileInlineControls: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            if !isRoot {
+            // Stack nodes can't be deleted
+            if !isRoot && node.type != .stack {
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
                 }
@@ -524,33 +584,35 @@ struct TileInlineControls: View {
                 .foregroundStyle(.secondary)
             }
 
-            // Custom segmented control: Empty and Stack are toggles; Application is a dropdown.
-            HStack(spacing: 0) {
-                segmentButton(
-                    label: "Empty", icon: "square",
-                    active: node.type == .empty
-                ) { onNodeChanged(node.withType(.empty)) }
+            if node.type == .stack {
+                // Stack just shows a label — can't be changed or deleted
+                Label("Stack", systemImage: "square.stack.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+            } else {
+                // Segmented control for empty/pinned nodes
+                HStack(spacing: 0) {
+                    segmentButton(
+                        label: "Empty", icon: "square",
+                        active: node.type == .empty
+                    ) { onNodeChanged(node.withType(.empty)) }
 
-                Divider().frame(height: 14)
+                    Divider().frame(height: 14)
 
-                segmentButton(
-                    label: "Stack", icon: "square.stack.fill",
-                    active: node.type == .stack
-                ) { onNodeChanged(node.withType(.stack)) }
+                    // Application segment — dropdown to pick app directly
+                    appDropdown
+                }
+                .fixedSize()
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
 
-                Divider().frame(height: 14)
-
-                // Application segment — dropdown to pick app directly
-                appDropdown
-            }
-            .fixedSize()
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-
-            // Window picker — separate control, only when an app is pinned and has multiple windows
-            if node.type == .pinned, windowsForCurrentApp.count > 1 {
-                windowPicker
+                // Window picker — separate control, only when an app is pinned and has multiple windows
+                if node.type == .pinned, windowsForCurrentApp.count > 1 {
+                    windowPicker
+                }
             }
 
             Spacer(minLength: 0)
@@ -761,6 +823,7 @@ struct ColumnDragHandle: View {
                     .onChanged { val in
                         if !dragging {
                             dragging = true
+                            NSCursor.resizeLeftRight.push()
                             startLeft = leftPct
                             startRight = rightPct
                             lastLeft = leftPct
@@ -777,6 +840,7 @@ struct ColumnDragHandle: View {
                     }
                     .onEnded { _ in
                         dragging = false
+                        NSCursor.pop()
                         onCommitted(lastLeft, lastRight)
                     }
             )
@@ -818,6 +882,7 @@ struct RowDragHandle: View {
                     .onChanged { val in
                         if !dragging {
                             dragging = true
+                            NSCursor.resizeUpDown.push()
                             startTop = topPct
                             startBottom = bottomPct
                             lastTop = topPct
@@ -834,6 +899,7 @@ struct RowDragHandle: View {
                     }
                     .onEnded { _ in
                         dragging = false
+                        NSCursor.pop()
                         onCommitted(lastTop, lastBottom)
                     }
             )
@@ -924,6 +990,7 @@ struct ScreenSetTabBar: View {
         selectedPath: [0],
         runningApps: [RunningAppInfo(name: "Xcode", bundleId: "com.apple.dt.Xcode")],
         runningWindows: [],
+        displayAspectRatio: 16.0 / 10.0,
         onSelect: { _ in },
         onRootChanged: { _ in },
         onDragStarted: {},
