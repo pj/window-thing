@@ -23,6 +23,81 @@ public struct LayoutLocation: Equatable, Sendable {
     }
 }
 
+// MARK: - Node Path
+
+/// A typed path into a layout tree, carrying its index chain and resolved context.
+public struct NodePath: Equatable, Hashable, Sendable {
+    /// The sequence of child indices from the root to this node.
+    public let indices: [Int]
+
+    public init(_ indices: [Int] = []) {
+        self.indices = indices
+    }
+
+    /// The root path (empty indices).
+    public static let root = NodePath()
+
+    public var isRoot: Bool { indices.isEmpty }
+
+    /// Number of levels deep (0 = root).
+    public var depth: Int { indices.count }
+
+    /// The path to this node's parent, or nil if this is root.
+    public var parent: NodePath? {
+        guard !indices.isEmpty else { return nil }
+        return NodePath(Array(indices.dropLast()))
+    }
+
+    /// The index of this node within its parent's children.
+    public var indexInParent: Int? {
+        indices.last
+    }
+
+    /// Create a child path by appending an index.
+    public func appending(_ index: Int) -> NodePath {
+        NodePath(indices + [index])
+    }
+
+    /// Resolve the node at this path in the given root.
+    public func node(in root: LayoutNode) -> LayoutNode? {
+        root.nodeAt(path: indices)
+    }
+
+    /// Resolve the parent node at this path in the given root.
+    public func parentNode(in root: LayoutNode) -> LayoutNode? {
+        parent?.node(in: root)
+    }
+
+    /// Whether this node is a leaf (not columns/rows) in the given root.
+    public func isLeaf(in root: LayoutNode) -> Bool {
+        guard let n = node(in: root) else { return false }
+        switch n.type {
+        case .columns, .rows: return false
+        default: return true
+        }
+    }
+
+    /// The type of the parent container (.columns, .rows, or nil for root).
+    public func parentContainerType(in root: LayoutNode) -> LayoutType? {
+        parentNode(in: root)?.type
+    }
+
+    /// Number of siblings (including self) in the parent container.
+    public func siblingCount(in root: LayoutNode) -> Int? {
+        guard let p = parentNode(in: root) else { return nil }
+        switch p.type {
+        case .columns: return p.columns?.count
+        case .rows: return p.rows?.count
+        default: return nil
+        }
+    }
+
+    /// Whether this is the only child (can't be deleted without removing parent).
+    public func isOnlyChild(in root: LayoutNode) -> Bool {
+        (siblingCount(in: root) ?? 0) <= 1
+    }
+}
+
 // MARK: - Layout Tree Navigation and Modification
 
 extension LayoutNode {

@@ -141,9 +141,85 @@ struct OverlayView: View {
             if viewModel.layouts.isEmpty {
                 noLayoutsView
             } else {
-                LayoutEditorPanel(viewModel: viewModel)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea(.container, edges: .top)
+                VStack(spacing: 0) {
+                    Divider()
+                    LayoutEditorPanel(viewModel: viewModel)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                if let node = selectedLeafNode {
+                    if node.type == .stack || viewModel.selectedNodePath.isRoot {
+                        Button {} label: {
+                            Image(systemName: "trash")
+                        }
+                        .disabled(true)
+                        .help("Stack panes cannot be deleted")
+                    } else {
+                        Button { deleteSelectedNode() } label: {
+                            Image(systemName: "trash")
+                        }
+                        .help("Delete pane")
+                    }
+                }
+            }
+
+            ToolbarItemGroup(placement: .principal) {
+                if let node = selectedLeafNode {
+                    if node.type == .stack {
+                        HStack(spacing: 6) {
+                            Image(systemName: "lock.fill")
+                                .foregroundStyle(.tertiary)
+                            Label("Stack", systemImage: "square.stack.fill")
+                                .foregroundStyle(Color.orange)
+                            Text("Resize only")
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 8)
+                    } else {
+                        ControlGroup {
+                            Button {
+                                replaceSelectedNode(node.withType(.empty))
+                            } label: {
+                                Label("Empty", systemImage: "square")
+                            }
+
+                            Menu {
+                                ForEach(viewModel.runningApps) { app in
+                                    Button(app.name) {
+                                        let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
+                                        replaceSelectedNode(LayoutNode(type: .pinned, percentage: node.percentage, pinned: pinned))
+                                    }
+                                }
+                            } label: {
+                                let active = node.type == .pinned
+                                let name = active ? (node.pinned?.application ?? "App") : "Pin App"
+                                Label(name, systemImage: "pin.fill")
+                            }
+                        }
+                    }
+                } else {
+                    Text("Click a pane to edit")
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 8)
+                }
+            }
+
+            ToolbarItemGroup(placement: .automatic) {
+                ControlGroup {
+                    Button { splitSelected(axis: .vertical) } label: {
+                        Label("Split Columns", systemImage: "rectangle.split.2x1")
+                    }
+                    .help("Split into columns")
+
+                    Button { splitSelected(axis: .horizontal) } label: {
+                        Label("Split Rows", systemImage: "rectangle.split.1x2")
+                    }
+                    .help("Split into rows")
+                }
+                .disabled(selectedLeafNode == nil)
             }
         }
         .overlay {
@@ -154,6 +230,102 @@ struct OverlayView: View {
                 CellPickerView(viewModel: viewModel, onDismiss: {})
             }
         }
+    }
+
+    // MARK: - Toolbar Helpers
+
+    private var selectedLeafNode: LayoutNode? {
+        guard let root = viewModel.editingRootNode else { return nil }
+        let path = viewModel.selectedNodePath
+        if path.isRoot {
+            switch root.type {
+            case .columns, .rows: return nil
+            default: return root
+            }
+        }
+        guard let node = path.node(in: root) else { return nil }
+        switch node.type {
+        case .columns, .rows: return nil
+        default: return node
+        }
+    }
+
+    private func replaceSelectedNode(_ newNode: LayoutNode) {
+        guard let root = viewModel.editingRootNode,
+              let updated = root.replacingNode(at: viewModel.selectedNodePath.indices, with: newNode) else { return }
+        viewModel.commitEdit(updated)
+    }
+
+    private func deleteSelectedNode() {
+        guard let root = viewModel.editingRootNode else { return }
+        let path = viewModel.selectedNodePath
+        guard !path.isRoot else { return }
+
+        guard let parentPath = path.parent,
+              let parent = parentPath.node(in: root),
+              let idx = path.indexInParent else { return }
+
+        var children: [LayoutNode]
+        let isColumns: Bool
+        switch parent.type {
+        case .columns:
+            guard let cols = parent.columns, cols.count > 1 else { return }
+            children = cols
+            isColumns = true
+        case .rows:
+            guard let rows = parent.rows, rows.count > 1 else { return }
+            children = rows
+            isColumns = false
+        default:
+            return
+        }
+
+        // Give the deleted pane's space to its immediate neighbor only
+        let defaultPct = 100.0 / Double(children.count)
+        let freedPct = children[idx].percentage ?? defaultPct
+        let neighborIdx = idx > 0 ? idx - 1 : idx + 1
+        let neighborPct = children[neighborIdx].percentage ?? defaultPct
+        children[neighborIdx] = children[neighborIdx].withPercentage(neighborPct + freedPct)
+        children.remove(at: idx)
+
+        let newParent: LayoutNode
+        if children.count == 1 {
+            // Collapse: replace the container with its sole child.
+            // The child must inherit the container's percentage so the
+            // grandparent's layout stays unchanged.
+            let child = children[0]
+            newParent = LayoutNode(
+                type: child.type,
+                percentage: parent.percentage,  // nil stays nil
+                pinned: child.pinned,
+                columns: child.columns,
+                rows: child.rows,
+                windows: child.windows,
+                stackRemaining: child.stackRemaining,
+                layout: child.layout?.value,
+                floats: child.floats,
+                zoomed: child.zoomed
+            )
+        } else {
+            newParent = isColumns ? parent.withColumns(children) : parent.withRows(children)
+        }
+
+        if let updated = root.replacingNode(at: parentPath.indices, with: newParent) {
+            viewModel.commitEdit(updated)
+        }
+        viewModel.selectedNodePath = .root
+    }
+
+    private func splitSelected(axis: SplitAxis) {
+        guard let node = selectedLeafNode else { return }
+        let newNode: LayoutNode
+        switch axis {
+        case .vertical:
+            newNode = LayoutNode.columns([node.withPercentage(50), .empty(percentage: 50)])
+        case .horizontal:
+            newNode = LayoutNode.rows([node.withPercentage(50), .empty(percentage: 50)])
+        }
+        replaceSelectedNode(newNode)
     }
 
     // MARK: - No Layouts Placeholder

@@ -14,7 +14,7 @@ public class OverlayViewModel: ObservableObject {
     @Published public var recordingHotkeyLayoutId: UUID?
     @Published public var editingLayout: Layout?
     @Published public var selectedScreenSetIndex: Int = 0
-    @Published public var selectedNodePath: [Int] = []
+    @Published public var selectedNodePath: NodePath = .root
     @Published public var editingRootNode: LayoutNode?
     @Published public var runningApps: [RunningAppInfo] = []
     @Published public var runningWindows: [Window] = []
@@ -78,7 +78,7 @@ public class OverlayViewModel: ObservableObject {
     public func startEditing(_ layout: Layout) {
         editingLayout = layout
         selectedScreenSetIndex = 0
-        selectedNodePath = []
+        selectedNodePath = .root
         refreshEditingRootNode()
     }
 
@@ -102,7 +102,7 @@ public class OverlayViewModel: ObservableObject {
 
     public func selectScreenSet(_ index: Int) {
         selectedScreenSetIndex = index
-        selectedNodePath = []
+        selectedNodePath = .root
         refreshEditingRootNode()
     }
 

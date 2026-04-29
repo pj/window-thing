@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreGraphics
 @testable import WindowThingViewModel
 @testable import WindowThingCore
 
@@ -78,10 +79,10 @@ struct StartEditingTests {
     func setsEditingLayout() {
         let layout = makeLayout(name: "Test")
         let (vm, _, _) = makeVM(layouts: [layout])
-        vm.selectedNodePath = [1, 2]
+        vm.selectedNodePath = NodePath([1, 2])
         vm.startEditing(layout)
         #expect(vm.editingLayout?.id == layout.id)
-        #expect(vm.selectedNodePath.isEmpty)
+        #expect(vm.selectedNodePath.isRoot)
         #expect(vm.selectedScreenSetIndex == 0)
     }
 
@@ -348,11 +349,14 @@ struct SaveEditsTests {
         let (vm, lm, _) = makeVM(layouts: [layout])
         vm.startEditing(layout)
         vm.commitEdit(LayoutNode.stackAll())
+        // commitEdit auto-saves, so counts are already 1 each
+        let updatedBefore = lm.updatedLayouts.count
+        let appliedBefore = lm.appliedLayouts.count
 
         vm.saveEdits()
 
-        #expect(lm.updatedLayouts.count == 1)
-        #expect(lm.appliedLayouts.count == 1)
+        #expect(lm.updatedLayouts.count == updatedBefore + 1)
+        #expect(lm.appliedLayouts.count == appliedBefore + 1)
     }
 
     @Test("saveEdits updates originalLayouts so cancel after save keeps edits")
@@ -399,17 +403,21 @@ struct CancelEditsTests {
         #expect(vm.undoManager.canUndo == false)
     }
 
-    @Test("cancelEdits does NOT call layoutManager")
+    @Test("cancelEdits does not call layoutManager beyond auto-save")
     func doesNotCallLayoutManager() {
         let layout = makeLayout(name: "L")
         let (vm, lm, _) = makeVM(layouts: [layout])
         vm.startEditing(layout)
         vm.commitEdit(LayoutNode.stackAll())
+        // commitEdit auto-saves, so layout manager has calls already
+        let updatedBefore = lm.updatedLayouts.count
+        let appliedBefore = lm.appliedLayouts.count
 
         vm.cancelEdits()
 
-        #expect(lm.updatedLayouts.isEmpty)
-        #expect(lm.appliedLayouts.isEmpty)
+        // cancelEdits should NOT add any further calls
+        #expect(lm.updatedLayouts.count == updatedBefore)
+        #expect(lm.appliedLayouts.count == appliedBefore)
     }
 }
 

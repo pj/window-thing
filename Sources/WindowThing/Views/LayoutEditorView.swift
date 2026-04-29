@@ -3,6 +3,90 @@ import AppKit
 import WindowThingCore
 import WindowThingViewModel
 
+// MARK: - Toolbar Pill Group (Safari-style bordered capsule container)
+
+/// Wraps child content in a Safari-style pill with a subtle border.
+struct ToolbarPill<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            content()
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 3)
+        .background(
+            Capsule()
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(0.12), lineWidth: 0.5)
+        )
+    }
+}
+
+/// A single item inside a ToolbarPill. Borderless at rest, highlight on hover.
+struct ToolbarPillButton<Label: View>: View {
+    let action: () -> Void
+    let active: Bool
+    @ViewBuilder let label: () -> Label
+    @State private var isHovering = false
+
+    init(active: Bool = false, action: @escaping () -> Void, @ViewBuilder label: @escaping () -> Label) {
+        self.active = active
+        self.action = action
+        self.label = label
+    }
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .font(.system(size: 13))
+                .foregroundStyle(active ? Color.accentColor : .primary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(active ? Color.accentColor.opacity(0.12)
+                              : isHovering ? Color.primary.opacity(0.08)
+                              : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// A menu inside a ToolbarPill.
+struct ToolbarPillMenu<MenuContent: View, Label: View>: View {
+    let active: Bool
+    @ViewBuilder let menuContent: () -> MenuContent
+    @ViewBuilder let label: () -> Label
+    @State private var isHovering = false
+
+    var body: some View {
+        Menu {
+            menuContent()
+        } label: {
+            label()
+                .font(.system(size: 13))
+                .foregroundStyle(active ? Color.accentColor : .primary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(active ? Color.accentColor.opacity(0.12)
+                              : isHovering ? Color.primary.opacity(0.08)
+                              : Color.clear)
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .onHover { isHovering = $0 }
+    }
+}
+
 // MARK: - LayoutType Helpers
 
 extension LayoutType {
@@ -63,7 +147,7 @@ struct LayoutEditorPanel: View {
                 runningApps: viewModel.runningApps,
                 runningWindows: viewModel.runningWindows,
                 displayAspectRatio: displayAspectRatio,
-                onSelect: { path in viewModel.selectedNodePath = path },
+                onSelect: { viewModel.selectedNodePath = $0 },
                 onRootChanged: { newRoot in viewModel.commitEdit(newRoot) },
                 onDragStarted: { viewModel.captureDragSnapshot() },
                 onLiveRootChange: { newRoot in viewModel.updateRootNodeLive(newRoot) }
@@ -88,11 +172,11 @@ struct LayoutEditorPanel: View {
 
 struct LayoutCanvasView: View {
     let rootNode: LayoutNode
-    let selectedPath: [Int]
+    let selectedPath: NodePath
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
     let displayAspectRatio: CGFloat
-    let onSelect: ([Int]) -> Void
+    let onSelect: (NodePath) -> Void
     let onRootChanged: (LayoutNode) -> Void
     let onDragStarted: () -> Void
     let onLiveRootChange: (LayoutNode) -> Void
@@ -134,7 +218,7 @@ struct LayoutCanvasView: View {
                 LayoutTileView(
                     node: rootNode,
                     rootNode: rootNode,
-                    path: [],
+                    path: .root,
                     selectedPath: selectedPath,
                     containerSize: canvasSize,
                     runningApps: runningApps,
@@ -173,43 +257,18 @@ struct LayoutCanvasView: View {
     }
 }
 
-// MARK: - Cell Index Helpers
-
-/// Count the number of leaf nodes that appear before `targetPath` in a depth-first traversal.
-private func leafCountBefore(_ targetPath: [Int], in node: LayoutNode) -> Int {
-    var count = 0
-    func visit(_ n: LayoutNode, _ currentPath: [Int]) -> Bool {
-        switch n.type {
-        case .columns:
-            for (i, col) in (n.columns ?? []).enumerated() {
-                if visit(col, currentPath + [i]) { return true }
-            }
-        case .rows:
-            for (i, row) in (n.rows ?? []).enumerated() {
-                if visit(row, currentPath + [i]) { return true }
-            }
-        default:
-            if currentPath == targetPath { return true }
-            count += 1
-        }
-        return false
-    }
-    _ = visit(node, [])
-    return count
-}
-
 // MARK: - Layout Tile View
 
 struct LayoutTileView: View {
     let node: LayoutNode
     /// The full tree root, threaded down so leaf tiles can compute their cell index.
     let rootNode: LayoutNode
-    let path: [Int]
-    let selectedPath: [Int]
+    let path: NodePath
+    let selectedPath: NodePath
     let containerSize: CGSize
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
-    let onSelect: ([Int]) -> Void
+    let onSelect: (NodePath) -> Void
     let onRootChanged: (LayoutNode) -> Void
     let onDragStarted: () -> Void
     let onLiveRootChange: (LayoutNode) -> Void
@@ -243,7 +302,7 @@ struct LayoutTileView: View {
                 LayoutTileView(
                     node: col,
                     rootNode: rootNode,
-                    path: path + [i],
+                    path: path.appending(i),
                     selectedPath: selectedPath,
                     containerSize: CGSize(width: widths[i], height: containerSize.height),
                     runningApps: runningApps,
@@ -314,7 +373,7 @@ struct LayoutTileView: View {
                 LayoutTileView(
                     node: row,
                     rootNode: rootNode,
-                    path: path + [i],
+                    path: path.appending(i),
                     selectedPath: selectedPath,
                     containerSize: CGSize(width: containerSize.width, height: heights[i]),
                     runningApps: runningApps,
@@ -377,87 +436,30 @@ struct LayoutTileView: View {
 
     // MARK: - Leaf Tile
 
-    @State private var tileHovering = false
-    @State private var splitAxis: SplitAxis? = nil
-    /// Normalized position (0–1) along the split axis, snapped to 5% increments.
-    @State private var splitPosition: CGFloat = 0.5
+    private var isSelected: Bool { path == selectedPath }
 
     private var leafTile: some View {
-        ZStack {
-            tileBackground
-            VStack(spacing: 0) {
-                if tileHovering {
-                    // Controls appear on hover
-                    TileInlineControls(
-                        node: node,
-                        isRoot: path.isEmpty,
-                        runningApps: runningApps,
-                        runningWindows: runningWindows,
-                        onDelete: {
-                            onRootChanged(LayoutNode.empty(percentage: node.percentage ?? 100))
-                            onSelect([])
-                        },
-                        onNodeChanged: { newNode in onRootChanged(newNode) }
-                    )
-                    Divider()
-                }
+        Button {
+            onSelect(path)
+        } label: {
+            ZStack {
+                tileBackground
                 tileContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-
-            // Split line overlay
-            if tileHovering, let axis = splitAxis {
-                SplitLineOverlay(axis: axis, position: splitPosition)
-                    .onTapGesture { performSplit(axis: axis) }
-            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.accentColor, lineWidth: isSelected ? 2 : 0)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                tileHovering = true
-                let normalizedX = location.x / max(containerSize.width, 1)
-                let normalizedY = location.y / max(containerSize.height, 1)
-
-                // Determine split axis based on mouse proximity to center lines
-                let aspectRatio = containerSize.width / max(containerSize.height, 1)
-                let distFromVerticalCenter = abs(normalizedX - 0.5)
-                let distFromHorizontalCenter = abs(normalizedY - 0.5)
-                let biasedVertDist = distFromVerticalCenter / max(aspectRatio, 0.5)
-                let biasedHorizDist = distFromHorizontalCenter * max(aspectRatio, 0.5)
-                let axis: SplitAxis = biasedVertDist < biasedHorizDist ? .vertical : .horizontal
-                splitAxis = axis
-
-                // Snap position to 5% increments, clamped to 10–90%
-                let raw = axis == .vertical ? normalizedX : normalizedY
-                let snapped = (raw * 20).rounded() / 20  // 5% steps
-                splitPosition = min(max(snapped, 0.1), 0.9)
-            case .ended:
-                tileHovering = false
-                splitAxis = nil
-            }
-        }
-        // Clip prevents controls from overflowing into adjacent tiles
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .dropDestination(for: RunningAppInfo.self) { items, _ in
             guard let app = items.first else { return false }
             let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
             onRootChanged(LayoutNode(type: .pinned, percentage: node.percentage, pinned: pinned))
             onSelect(path)
             return true
-        }
-    }
-
-    private func performSplit(axis: SplitAxis) {
-        let leftPct = Double(splitPosition * 100)
-        let rightPct = 100.0 - leftPct
-        switch axis {
-        case .vertical:
-            onRootChanged(LayoutNode.columns([node.withPercentage(leftPct), .empty(percentage: rightPct)]))
-            onSelect(path + [1])
-        case .horizontal:
-            onRootChanged(LayoutNode.rows([node.withPercentage(leftPct), .empty(percentage: rightPct)]))
-            onSelect(path + [1])
         }
     }
 
@@ -561,175 +563,215 @@ struct LayoutTileView: View {
     }
 }
 
-// MARK: - Tile Inline Controls
+// MARK: - Tile Context Toolbar
 
-/// Controls that sit inside the selected leaf tile, offset from the top.
-struct TileInlineControls: View {
-    let node: LayoutNode
-    let isRoot: Bool
+/// Contextual toolbar above the canvas showing controls for the selected tile.
+struct TileContextToolbar: View {
+    let selectedPath: NodePath
+    let rootNode: LayoutNode?
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
-    let onDelete: () -> Void
     let onNodeChanged: (LayoutNode) -> Void
+    let onDeselect: () -> Void
+
+    private var selectedNode: LayoutNode? {
+        guard let root = rootNode else { return nil }
+        // If no explicit selection but root is a leaf, treat root as selected
+        if selectedPath.isRoot {
+            switch root.type {
+            case .columns, .rows: return nil
+            default: return root
+            }
+        }
+        return selectedPath.node(in: root)
+    }
+
+    private var isLeaf: Bool {
+        guard let root = rootNode else { return false }
+        if selectedPath.isRoot {
+            switch root.type {
+            case .columns, .rows: return false
+            default: return true
+            }
+        }
+        return selectedPath.isLeaf(in: root)
+    }
+
+    private var hasSelection: Bool {
+        selectedNode != nil && isLeaf
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
-            // Stack nodes can't be deleted
-            if !isRoot && node.type != .stack {
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
+        HStack(spacing: 8) {
+            // Left: delete
+            if let node = selectedNode, isLeaf, !selectedPath.isRoot, node.type != .stack {
+                ToolbarPill {
+                    ToolbarPillButton(action: deleteSelectedNode) {
+                        Image(systemName: "trash")
+                    }
                 }
-                .buttonStyle(.borderless)
-                .controlSize(.mini)
-                .foregroundStyle(.secondary)
-            }
-
-            if node.type == .stack {
-                // Stack just shows a label — can't be changed or deleted
-                Label("Stack", systemImage: "square.stack.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.orange)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-            } else {
-                // Segmented control for empty/pinned nodes
-                HStack(spacing: 0) {
-                    segmentButton(
-                        label: "Empty", icon: "square",
-                        active: node.type == .empty
-                    ) { onNodeChanged(node.withType(.empty)) }
-
-                    Divider().frame(height: 14)
-
-                    // Application segment — dropdown to pick app directly
-                    appDropdown
-                }
-                .fixedSize()
-                .background(Color(nsColor: .controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
-
-                // Window picker — separate control, only when an app is pinned and has multiple windows
-                if node.type == .pinned, windowsForCurrentApp.count > 1 {
-                    windowPicker
-                }
+                .help("Delete pane")
             }
 
             Spacer(minLength: 0)
+
+            // Center: pane type + app picker
+            if let node = selectedNode, isLeaf {
+                centerControls(node)
+            } else {
+                Text("Click a pane to edit")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer(minLength: 0)
+
+            // Right: split
+            ToolbarPill {
+                ToolbarPillButton(action: { splitSelected(axis: .vertical) }) {
+                    Image(systemName: "rectangle.split.2x1")
+                }
+                ToolbarPillButton(action: { splitSelected(axis: .horizontal) }) {
+                    Image(systemName: "rectangle.split.1x2")
+                }
+            }
+            .disabled(!hasSelection)
+            .opacity(hasSelection ? 1 : 0.5)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .frame(height: 38)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    // MARK: - Segment button (toggle style)
+    // MARK: - Center Controls
 
-    private func segmentButton(label: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(label, systemImage: icon)
-                .labelStyle(.titleAndIcon)
-                .font(.system(size: 10, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? Color.accentColor : Color.primary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(active ? Color.accentColor.opacity(0.12) : Color.clear)
+    @ViewBuilder
+    private func centerControls(_ node: LayoutNode) -> some View {
+        if node.type == .stack {
+            ToolbarPill {
+                Label("Stack", systemImage: "square.stack.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+            }
+        } else {
+            ToolbarPill {
+                ToolbarPillButton(active: node.type == .empty, action: {
+                    replaceSelectedNode(node.withType(.empty))
+                }) {
+                    Image(systemName: "square")
+                }
+
+                appMenu(node)
+            }
+
+            if node.type == .pinned {
+                let windows = windowsForApp(node)
+                if windows.count > 1 {
+                    windowPicker(node, windows: windows)
+                }
+            }
         }
-        .buttonStyle(.plain)
     }
 
-    // MARK: - Application dropdown segment
+    // MARK: - App Menu
 
-    private var appDropdown: some View {
+    private func appMenu(_ node: LayoutNode) -> some View {
         let active = node.type == .pinned
-        let appName = node.pinned?.application ?? "Application"
-        return Menu {
+        let appName = active ? (node.pinned?.application ?? "App") : "Pin App"
+        return ToolbarPillMenu(active: active) {
             ForEach(runningApps) { app in
-                Button(app.name) { pinApp(app) }
+                Button(app.name) {
+                    let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
+                    replaceSelectedNode(LayoutNode(type: .pinned, percentage: node.percentage, pinned: pinned))
+                }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "pin.fill").font(.system(size: 9))
-                Text(active ? appName : "Application")
-                    .font(.system(size: 10, weight: active ? .semibold : .regular))
+            HStack(spacing: 3) {
+                Image(systemName: "pin.fill")
+                Text(appName)
                     .lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .medium))
             }
-            .foregroundStyle(active ? Color.accentColor : Color.primary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(active ? Color.accentColor.opacity(0.12) : Color.clear)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
-    // MARK: - Window picker (multi-select)
+    // MARK: - Window Picker
 
-    private var windowsForCurrentApp: [WTWindow] {
+    private func windowsForApp(_ node: LayoutNode) -> [WTWindow] {
         guard let pinned = node.pinned else { return [] }
         return runningWindows.filter {
             $0.bundleId == pinned.bundleId || $0.application == pinned.application
         }
     }
 
-    private var selectedTitles: Set<String> {
-        Set(node.pinned?.windowTitles ?? [])
-    }
-
-    private var windowPicker: some View {
-        let windows = windowsForCurrentApp
-        let titles = selectedTitles
+    private func windowPicker(_ node: LayoutNode, windows: [WTWindow]) -> some View {
+        let titles = Set(node.pinned?.windowTitles ?? [])
         let label = titles.isEmpty ? "All Windows" : titles.count == 1 ? titles.first! : "\(titles.count) Windows"
 
-        return Menu {
-            // "All Windows" option — clears selection
-            Button {
-                updateWindowTitles([])
-            } label: {
-                Label("All Windows", systemImage: titles.isEmpty ? "checkmark" : "")
-            }
-            Divider()
-            ForEach(windows) { w in
-                let display = w.title.isEmpty ? "Untitled" : w.title
-                let checked = titles.contains(w.title)
+        return ToolbarPill {
+            ToolbarPillMenu(active: false) {
                 Button {
-                    toggleWindow(w.title)
+                    updateWindowTitles(node, titles: [])
                 } label: {
-                    Label(display, systemImage: checked ? "checkmark" : "")
+                    Label("All Windows", systemImage: titles.isEmpty ? "checkmark" : "")
+                }
+                Divider()
+                ForEach(windows) { w in
+                    let display = w.title.isEmpty ? "Untitled" : w.title
+                    let checked = titles.contains(w.title)
+                    Button {
+                        var updated = titles
+                        if checked { updated.remove(w.title) } else { updated.insert(w.title) }
+                        updateWindowTitles(node, titles: Array(updated))
+                    } label: {
+                        Label(display, systemImage: checked ? "checkmark" : "")
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "macwindow")
+                    Text(label)
+                        .lineLimit(1)
                 }
             }
-        } label: {
-            Label(label, systemImage: "macwindow")
-                .font(.system(size: 11))
         }
-        .fixedSize()
     }
 
-    // MARK: - Helpers
+    // MARK: - Actions
 
-    private func pinApp(_ app: RunningAppInfo) {
-        let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
-        onNodeChanged(LayoutNode(type: .pinned, percentage: node.percentage, pinned: pinned))
+    private func replaceSelectedNode(_ newNode: LayoutNode) {
+        guard let root = rootNode,
+              let updated = root.replacingNode(at: selectedPath.indices, with: newNode) else { return }
+        onNodeChanged(updated)
     }
 
-    private func toggleWindow(_ title: String) {
-        guard let pinned = node.pinned else { return }
-        var titles = Set(pinned.windowTitles ?? [])
-        if titles.contains(title) {
-            titles.remove(title)
-        } else {
-            titles.insert(title)
+    private func deleteSelectedNode() {
+        guard let node = selectedNode else { return }
+        replaceSelectedNode(LayoutNode.empty(percentage: node.percentage ?? 100))
+        onDeselect()
+    }
+
+    private func splitSelected(axis: SplitAxis) {
+        guard let node = selectedNode else { return }
+        let newNode: LayoutNode
+        switch axis {
+        case .vertical:
+            newNode = LayoutNode.columns([node.withPercentage(50), .empty(percentage: 50)])
+        case .horizontal:
+            newNode = LayoutNode.rows([node.withPercentage(50), .empty(percentage: 50)])
         }
-        updateWindowTitles(Array(titles))
+        replaceSelectedNode(newNode)
     }
 
-    private func updateWindowTitles(_ titles: [String]) {
+    private func updateWindowTitles(_ node: LayoutNode, titles: [String]) {
         guard let pinned = node.pinned else { return }
         let updated = PinnedConfig(
             application: pinned.application,
             bundleId: pinned.bundleId,
             windowTitles: titles.isEmpty ? nil : titles
         )
-        onNodeChanged(LayoutNode(type: .pinned, percentage: node.percentage, pinned: updated))
+        replaceSelectedNode(LayoutNode(type: .pinned, percentage: node.percentage, pinned: updated))
     }
 }
 
@@ -737,55 +779,6 @@ struct TileInlineControls: View {
 
 enum SplitAxis {
     case vertical, horizontal
-}
-
-// MARK: - Split Line Overlay
-
-/// Shows a dashed line with a scissor icon indicating where a tile will be split.
-struct SplitLineOverlay: View {
-    let axis: SplitAxis
-    /// Normalized position (0–1) along the split axis.
-    let position: CGFloat
-
-    var body: some View {
-        GeometryReader { geo in
-            let pos = axis == .vertical
-                ? CGPoint(x: geo.size.width * position, y: geo.size.height / 2)
-                : CGPoint(x: geo.size.width / 2, y: geo.size.height * position)
-
-            ZStack {
-                // Dashed split line
-                if axis == .vertical {
-                    Path { p in
-                        let x = geo.size.width * position
-                        p.move(to: CGPoint(x: x, y: 8))
-                        p.addLine(to: CGPoint(x: x, y: geo.size.height - 8))
-                    }
-                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                    .foregroundStyle(Color.accentColor.opacity(0.6))
-                } else {
-                    Path { p in
-                        let y = geo.size.height * position
-                        p.move(to: CGPoint(x: 8, y: y))
-                        p.addLine(to: CGPoint(x: geo.size.width - 8, y: y))
-                    }
-                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                    .foregroundStyle(Color.accentColor.opacity(0.6))
-                }
-
-                // Scissor icon at the split position
-                Image(systemName: "scissors")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.accentColor.opacity(0.8))
-                    .rotationEffect(axis == .vertical ? .degrees(90) : .degrees(0))
-                    .padding(4)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .position(pos)
-            }
-        }
-        .allowsHitTesting(true)
-        .contentShape(Rectangle())
-    }
 }
 
 // MARK: - Column Drag Handle
@@ -987,7 +980,7 @@ struct ScreenSetTabBar: View {
     ])
     return LayoutCanvasView(
         rootNode: root,
-        selectedPath: [0],
+        selectedPath: NodePath([0]),
         runningApps: [RunningAppInfo(name: "Xcode", bundleId: "com.apple.dt.Xcode")],
         runningWindows: [],
         displayAspectRatio: 16.0 / 10.0,
@@ -997,35 +990,6 @@ struct ScreenSetTabBar: View {
         onLiveRootChange: { _ in }
     )
     .frame(width: 500, height: 300)
-}
-
-#Preview("Tile Inline Controls — Pinned") {
-    TileInlineControls(
-        node: .pinned(app: "Safari", percentage: 60),
-        isRoot: false,
-        runningApps: [
-            RunningAppInfo(name: "Safari", bundleId: "com.apple.Safari"),
-            RunningAppInfo(name: "Xcode", bundleId: "com.apple.dt.Xcode"),
-        ],
-        runningWindows: [],
-        onDelete: {},
-        onNodeChanged: { _ in }
-    )
-    .padding()
-    .background(.regularMaterial)
-}
-
-#Preview("Tile Inline Controls — Empty (root)") {
-    TileInlineControls(
-        node: .empty(percentage: 100),
-        isRoot: true,
-        runningApps: [],
-        runningWindows: [],
-        onDelete: {},
-        onNodeChanged: { _ in }
-    )
-    .padding()
-    .background(.regularMaterial)
 }
 
 #endif
