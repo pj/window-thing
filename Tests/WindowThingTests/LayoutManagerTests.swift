@@ -96,6 +96,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         #expect(layoutManager.currentLayout != nil)
         #expect(layoutManager.currentLayout?.name == "Coding")
@@ -110,6 +111,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         // With new stack behavior: 3 pinned + 2 remaining = 5 total
         #expect(mockWindowManager.setWindowFrameCalls.count == 5)
@@ -124,6 +126,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         let vscodeCall = mockWindowManager.setWindowFrameCalls.first {
             $0.pid == TestFixtures.codeWindow.pid
@@ -143,6 +146,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         #expect(mockWindowManager.setWindowFrameCalls.count == 0)
     }
@@ -156,6 +160,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.dualDisplayLayout)
+        layoutManager.waitForPendingApply()
 
         // All 5 windows should be placed (3 pinned + 2 remaining on main)
         #expect(mockWindowManager.setWindowFrameCalls.count == 5)
@@ -277,6 +282,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.stackLayout)
+        layoutManager.waitForPendingApply()
 
         // With new behavior: Stack collects ALL remaining windows (5 total)
         #expect(mockWindowManager.setWindowFrameCalls.count == 5)
@@ -305,6 +311,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         #expect(mockWindowManager.setWindowFrameCalls.count == 0)
     }
@@ -319,6 +326,7 @@ struct LayoutManagerTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
 
         layoutManager.applyLayout(TestFixtures.codingLayout)
+        layoutManager.waitForPendingApply()
 
         // With new stack behavior: 3 pinned + 2 remaining = 5 total
         // Even if setWindowFrame fails, we still try to set all windows

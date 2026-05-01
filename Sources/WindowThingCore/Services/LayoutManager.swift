@@ -534,6 +534,13 @@ public class LayoutManager: LayoutManaging {
 
     private let windowManager: WindowManaging
     private let defaults: UserDefaults
+    let applyQueue = DispatchQueue(label: "com.windowthing.layout-apply", qos: .userInitiated)
+    private var currentApplyWorkItem: DispatchWorkItem?
+
+    /// Block until any pending layout application completes. For testing only.
+    public func waitForPendingApply() {
+        applyQueue.sync {}
+    }
 
     public init(windowManager: WindowManaging, userDefaults: UserDefaults = .standard) {
         self.windowManager = windowManager
@@ -571,6 +578,9 @@ public class LayoutManager: LayoutManaging {
     }
 
     public func applyLayout(_ layout: Layout) {
+        // Cancel any in-progress layout application
+        currentApplyWorkItem?.cancel()
+
         let displays = windowManager.getDisplays()
         let windows = windowManager.getWindows()
 
@@ -580,18 +590,26 @@ public class LayoutManager: LayoutManaging {
             windows: windows
         )
 
+        // Update state immediately on calling thread
         currentLayout = layout
         lastUsedLayout = layout
         defaults.set(layout.id.uuidString, forKey: "lastUsedLayoutId")
 
-        // Apply all placements
-        for placement in placements {
-            _ = windowManager.setWindowFrame(
-                pid: placement.window.pid,
-                windowId: placement.window.id,
-                frame: placement.targetFrame
-            )
+        // Apply window frames on background queue (cancellable)
+        let wm = windowManager
+        var item: DispatchWorkItem!
+        item = DispatchWorkItem {
+            for placement in placements {
+                guard !item.isCancelled else { return }
+                _ = wm.setWindowFrame(
+                    pid: placement.window.pid,
+                    windowId: placement.window.id,
+                    frame: placement.targetFrame
+                )
+            }
         }
+        currentApplyWorkItem = item
+        applyQueue.async(execute: item)
     }
 
     // MARK: - Cell Movement

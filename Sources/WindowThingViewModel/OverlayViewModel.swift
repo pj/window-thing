@@ -18,6 +18,7 @@ public class OverlayViewModel: ObservableObject {
     @Published public var editingRootNode: LayoutNode?
     @Published public var runningApps: [RunningAppInfo] = []
     @Published public var runningWindows: [Window] = []
+    @Published public var thumbnailRevision: Int = 0
 
     // Carousel
     @Published public var carouselOffset: Int = 0
@@ -57,8 +58,22 @@ public class OverlayViewModel: ObservableObject {
         originalLayouts = layouts
         carouselOffset = 0
         refreshRunningApps()
-        if let first = layouts.first {
-            startEditing(first)
+        let active = layoutManager.lastUsedLayout
+            ?? layoutManager.currentLayout
+            ?? layouts.first
+        if let active {
+            startEditing(active)
+            // Adjust carousel so the active layout is visible
+            if let idx = layouts.firstIndex(where: { $0.id == active.id }) {
+                if idx >= carouselOffset + carouselPageSize {
+                    carouselOffset = max(0, idx - carouselPageSize + 1)
+                } else if idx < carouselOffset {
+                    carouselOffset = idx
+                }
+            }
+        }
+        WindowThumbnailCache.shared.onUpdate = { [weak self] in
+            self?.thumbnailRevision += 1
         }
     }
 

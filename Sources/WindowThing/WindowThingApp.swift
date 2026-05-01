@@ -335,10 +335,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start polling for window changes
         windowManager.startPolling()
 
+        // Request Screen Recording permission if not already granted
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+        }
+
         // Start thumbnail cache (requires Screen Recording permission — degrades gracefully)
         let interval = configManager.config.thumbnailCaptureInterval ?? 3.0
         WindowThumbnailCache.shared.updateInterval(interval)
         WindowThumbnailCache.shared.start()
+        debugLog(" Thumbnail cache state: \(WindowThumbnailCache.shared.state), interval: \(interval)s")
 
         debugLog(" Monitoring started")
     }

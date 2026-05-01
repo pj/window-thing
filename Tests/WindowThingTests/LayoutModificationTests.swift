@@ -712,6 +712,7 @@ struct LayoutManagerDynamicModificationTests {
             monitor: ScreenConfig.primaryKey,
             location: [1]
         )
+        layoutManager.waitForPendingApply()
 
         #expect(success == true)
         // Should have called setWindowFrame for all windows after modification

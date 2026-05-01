@@ -205,6 +205,7 @@ struct PrimaryDisplayLayoutTests {
         let layout = createPinnedLayout(for: testWindow, fullscreen: true)
         let layoutManager = LayoutManager(windowManager: windowManager)
         layoutManager.applyLayout(layout)
+        layoutManager.waitForPendingApply()
 
         // Wait for window to move
         Thread.sleep(forTimeInterval: 0.5)
@@ -243,6 +244,7 @@ struct PrimaryDisplayLayoutTests {
         // Apply layout
         let layoutManager = LayoutManager(windowManager: windowManager)
         layoutManager.applyLayout(layout)
+        layoutManager.waitForPendingApply()
 
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -278,6 +280,7 @@ struct PrimaryDisplayLayoutTests {
         // Apply fullscreen layout
         let fullscreenLayout = createPinnedLayout(for: testWindow, fullscreen: true)
         layoutManager.applyLayout(fullscreenLayout)
+        layoutManager.waitForPendingApply()
         Thread.sleep(forTimeInterval: 0.3)
 
         var updatedWindows = windowManager.getWindows()
@@ -289,6 +292,7 @@ struct PrimaryDisplayLayoutTests {
         // Switch to left half layout
         let leftHalfLayout = createPinnedLayout(for: testWindow, fullscreen: false)
         layoutManager.applyLayout(leftHalfLayout)
+        layoutManager.waitForPendingApply()
         Thread.sleep(forTimeInterval: 0.3)
 
         updatedWindows = windowManager.getWindows()
@@ -299,6 +303,7 @@ struct PrimaryDisplayLayoutTests {
 
         // Switch back to fullscreen
         layoutManager.applyLayout(fullscreenLayout)
+        layoutManager.waitForPendingApply()
         Thread.sleep(forTimeInterval: 0.3)
 
         updatedWindows = windowManager.getWindows()

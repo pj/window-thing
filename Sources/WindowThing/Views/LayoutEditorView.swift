@@ -146,6 +146,7 @@ struct LayoutEditorPanel: View {
                 selectedPath: viewModel.selectedNodePath,
                 runningApps: viewModel.runningApps,
                 runningWindows: viewModel.runningWindows,
+                thumbnailRevision: viewModel.thumbnailRevision,
                 displayAspectRatio: displayAspectRatio,
                 onSelect: { viewModel.selectedNodePath = $0 },
                 onRootChanged: { newRoot in viewModel.commitEdit(newRoot) },
@@ -175,6 +176,7 @@ struct LayoutCanvasView: View {
     let selectedPath: NodePath
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
+    let thumbnailRevision: Int
     let displayAspectRatio: CGFloat
     let onSelect: (NodePath) -> Void
     let onRootChanged: (LayoutNode) -> Void
@@ -223,6 +225,7 @@ struct LayoutCanvasView: View {
                     containerSize: canvasSize,
                     runningApps: runningApps,
                     runningWindows: runningWindows,
+                    thumbnailRevision: thumbnailRevision,
                     onSelect: onSelect,
                     onRootChanged: onRootChanged,
                     onDragStarted: onDragStarted,
@@ -268,6 +271,7 @@ struct LayoutTileView: View {
     let containerSize: CGSize
     let runningApps: [RunningAppInfo]
     let runningWindows: [WTWindow]
+    let thumbnailRevision: Int
     let onSelect: (NodePath) -> Void
     let onRootChanged: (LayoutNode) -> Void
     let onDragStarted: () -> Void
@@ -307,6 +311,7 @@ struct LayoutTileView: View {
                     containerSize: CGSize(width: widths[i], height: containerSize.height),
                     runningApps: runningApps,
                     runningWindows: runningWindows,
+                    thumbnailRevision: thumbnailRevision,
                     onSelect: onSelect,
                     onRootChanged: { newChild in
                         var newCols = cols
@@ -378,6 +383,7 @@ struct LayoutTileView: View {
                     containerSize: CGSize(width: containerSize.width, height: heights[i]),
                     runningApps: runningApps,
                     runningWindows: runningWindows,
+                    thumbnailRevision: thumbnailRevision,
                     onSelect: onSelect,
                     onRootChanged: { newChild in
                         var newRows = rs
@@ -500,41 +506,159 @@ struct LayoutTileView: View {
     }
 
     private var stackVisual: some View {
-        ZStack {
-            ForEach(0..<3, id: \.self) { i in
-                let o = CGFloat(2 - i) * 4.0
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.orange.opacity(0.15 + Double(i) * 0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-                    )
-                    .frame(width: 36, height: 24)
-                    .offset(x: o * 0.7, y: -o)
+        let _ = thumbnailRevision
+        let stackThumbnails = stackWindowThumbnails
+        let maxCards = min(stackThumbnails.count, 3)
+        let inset: CGFloat = 12.0  // space for offset cards behind
+
+        return ZStack {
+            if stackThumbnails.isEmpty {
+                // Fallback: stylized placeholder cards
+                ForEach(0..<3, id: \.self) { i in
+                    let o = CGFloat(2 - i) * 4.0
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.orange.opacity(0.15 + Double(i) * 0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                        )
+                        .frame(width: 36, height: 24)
+                        .offset(x: o * 0.7, y: -o)
+                }
+            } else {
+                // Back-to-front: last item drawn on top (frontmost window)
+                ForEach(0..<maxCards, id: \.self) { i in
+                    let reverseIdx = maxCards - 1 - i
+                    let offset = CGFloat(reverseIdx) * inset
+                    Image(nsImage: stackThumbnails[i])
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(
+                            width: containerSize.width - inset * CGFloat(maxCards - 1),
+                            height: containerSize.height - inset * CGFloat(maxCards - 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color(white: 0.3), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.4), radius: 3, x: 2, y: 2)
+                        .offset(x: -offset, y: -offset)
+                }
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Get thumbnails for windows that belong in this stack (not pinned elsewhere).
+    /// Windows are already in z-order (frontmost first) from CGWindowListCopyWindowInfo.
+    private var stackWindowThumbnails: [NSImage] {
+        let cache = WindowThumbnailCache.shared
+        let pinnedApps = collectPinnedApps(in: rootNode)
+        var thumbnails: [NSImage] = []
+        for window in runningWindows {
+            // Skip our own window
+            if window.application == "WindowThing" { continue }
+            // Skip windows whose app is pinned in another tile
+            let isPinned = pinnedApps.contains { app in
+                if let bundleId = app.bundleId, window.bundleId == bundleId { return true }
+                if let name = app.application,
+                   window.application.localizedCaseInsensitiveCompare(name) == .orderedSame { return true }
+                return false
+            }
+            if isPinned { continue }
+            if let img = cache.nsImage(for: window.id) {
+                thumbnails.append(img)
+            }
+            if thumbnails.count >= 3 { break }
+        }
+        return thumbnails
+    }
+
+    /// Collect all PinnedConfigs from the layout tree (excluding stack nodes).
+    private func collectPinnedApps(in node: LayoutNode) -> [PinnedConfig] {
+        switch node.type {
+        case .pinned:
+            if let p = node.pinned { return [p] }
+            return []
+        case .columns:
+            return (node.columns ?? []).flatMap { collectPinnedApps(in: $0) }
+        case .rows:
+            return (node.rows ?? []).flatMap { collectPinnedApps(in: $0) }
+        default:
+            return []
         }
     }
 
     private var pinnedContent: some View {
-        VStack(spacing: 3) {
-            Image(systemName: "pin.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.accentColor)
-            let label = node.pinned?.application ?? node.pinned?.bundleId ?? ""
-            if !label.isEmpty {
-                Text(label)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        let _ = thumbnailRevision // force SwiftUI dependency on cache updates
+        let thumbnail = pinnedThumbnail
+        let appIcon = pinnedAppIcon
+
+        return ZStack {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .opacity(0.6)
             }
-            if let pct = node.percentage {
-                Text("\(Int(pct.rounded()))%")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+
+            VStack(spacing: 3) {
+                if thumbnail == nil, let appIcon {
+                    Image(nsImage: appIcon)
+                        .resizable()
+                        .frame(width: 24, height: 24)
+                } else if thumbnail == nil {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentColor)
+                }
+                let label = node.pinned?.application ?? node.pinned?.bundleId ?? ""
+                if !label.isEmpty {
+                    Text(label)
+                        .font(.system(size: 10, weight: thumbnail != nil ? .medium : .regular))
+                        .foregroundStyle(thumbnail != nil ? .primary : .secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .shadow(color: thumbnail != nil ? .black.opacity(0.5) : .clear, radius: 2)
+                }
+            }
+            .padding(6)
+        }
+    }
+
+    /// Find a thumbnail for this pinned node by matching windows.
+    private var pinnedThumbnail: NSImage? {
+        guard let pinned = node.pinned else { return nil }
+        let cache = WindowThumbnailCache.shared
+        // Find the first matching window
+        for window in runningWindows {
+            if let bundleId = pinned.bundleId, window.bundleId == bundleId {
+                if let img = cache.nsImage(for: window.id) { return img }
+            } else if let app = pinned.application,
+                      window.application.localizedCaseInsensitiveCompare(app) == .orderedSame {
+                if let img = cache.nsImage(for: window.id) { return img }
             }
         }
-        .padding(6)
+        return nil
+    }
+
+    /// Get the app icon for this pinned node.
+    private var pinnedAppIcon: NSImage? {
+        guard let bundleId = node.pinned?.bundleId,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            // Try by name
+            if let appName = node.pinned?.application {
+                let apps = NSWorkspace.shared.runningApplications
+                if let app = apps.first(where: { $0.localizedName == appName }) {
+                    return app.icon
+                }
+            }
+            return nil
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     private var emptyContent: some View {
@@ -978,11 +1102,12 @@ struct ScreenSetTabBar: View {
         .empty(percentage: 25),
         .stackAll(percentage: 25)
     ])
-    return LayoutCanvasView(
+    LayoutCanvasView(
         rootNode: root,
         selectedPath: NodePath([0]),
         runningApps: [RunningAppInfo(name: "Xcode", bundleId: "com.apple.dt.Xcode")],
         runningWindows: [],
+        thumbnailRevision: 0,
         displayAspectRatio: 16.0 / 10.0,
         onSelect: { _ in },
         onRootChanged: { _ in },

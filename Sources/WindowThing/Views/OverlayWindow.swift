@@ -188,9 +188,18 @@ struct OverlayView: View {
 
                             Menu {
                                 ForEach(viewModel.runningApps) { app in
-                                    Button(app.name) {
+                                    Button {
                                         let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
                                         replaceSelectedNode(LayoutNode(type: .pinned, percentage: node.percentage, pinned: pinned))
+                                    } label: {
+                                        if let bundleId = app.bundleId,
+                                           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                                            let icon = NSWorkspace.shared.icon(forFile: url.path)
+                                            Image(nsImage: icon)
+                                            Text(app.name)
+                                        } else {
+                                            Text(app.name)
+                                        }
                                     }
                                 }
                             } label: {
