@@ -59,6 +59,12 @@ class OverlayWindow: NSWindow {
     }
 
     func showOverlay() {
+        // Capture focused window before the overlay steals focus
+        let wm = WindowManager.shared
+        if let app = wm.getFocusedApplication(),
+           let window = app.focusedWindow ?? wm.getWindows().first(where: { $0.pid == app.id || $0.bundleId == app.bundleId }) {
+            viewModel.selectedMoveWindow = window
+        }
         viewModel.refresh()
         // Re-center on the current main screen each time
         let screen = NSScreen.main ?? NSScreen.screens[0]
@@ -95,10 +101,125 @@ class OverlayWindow: NSWindow {
     override var canBecomeMain: Bool { true }
     override var undoManager: UndoManager? { viewModel.undoManager }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { hideOverlay(); return }
-        super.keyDown(with: event)
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            // Escape or Space: close selector first, then overlay
+            if event.keyCode == 53 || event.keyCode == 49 {
+                if viewModel.isAppSelectorVisible {
+                    viewModel.hideAppSelector()
+                    return
+                }
+                // Space opens selector if a leaf pane is selected, otherwise closes overlay
+                if event.keyCode == 49 && hasSelectedLeafPane {
+                    viewModel.showAppSelector()
+                    return
+                }
+                hideOverlay()
+                return
+            }
+
+            // App selector visible: intercept number keys for quick-select
+            if viewModel.isAppSelectorVisible {
+                if let handled = handleAppSelectorKey(event), handled {
+                    return
+                }
+                // Let other keys (letters, backspace) pass through to SwiftUI TextField
+                super.sendEvent(event)
+                return
+            }
+
+            // Cell movement: press cell key to move focused window there and close
+            if event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+               let chars = event.charactersIgnoringModifiers,
+               chars.count == 1,
+               let address = CellAddress(string: chars) {
+                moveSelectedWindow(to: address)
+                hideOverlay()
+                return
+            }
+        }
+
+        // Shift toggle for app selector mode
+        if event.type == .flagsChanged, viewModel.isAppSelectorVisible {
+            let shiftPressed = event.modifierFlags.contains(.shift)
+            if shiftPressed {
+                viewModel.toggleAppSelectorMode()
+            }
+        }
+
+        super.sendEvent(event)
     }
+
+    /// Handle key events when the app selector is visible.
+    /// Returns true if the event was consumed, nil/false to let it pass to SwiftUI.
+    private func handleAppSelectorKey(_ event: NSEvent) -> Bool? {
+        guard let chars = event.charactersIgnoringModifiers, chars.count == 1,
+              let ch = chars.first else { return nil }
+
+        // Number keys 1-9 for quick select
+        if let digit = ch.wholeNumberValue, digit >= 1, digit <= 9 {
+            let index = digit - 1
+            viewModel.applyAppSelectorSelection(at: index)
+            return true
+        }
+
+        // Return: confirm current selection
+        if event.keyCode == 36 {
+            viewModel.applyAppSelectorSelection(at: viewModel.appSelectorSelectedIndex)
+            return true
+        }
+
+        // Arrow keys: navigate grid
+        let columnCount = 4 // matches grid adaptive minimum ~88pt in 420pt width
+        switch event.keyCode {
+        case 123: // left
+            viewModel.appSelectorSelectedIndex = max(0, viewModel.appSelectorSelectedIndex - 1)
+            return true
+        case 124: // right
+            viewModel.appSelectorSelectedIndex = min(viewModel.appSelectorSelectedIndex + 1, maxSelectorIndex)
+            return true
+        case 126: // up
+            let newIdx = viewModel.appSelectorSelectedIndex - columnCount
+            if newIdx >= 0 { viewModel.appSelectorSelectedIndex = newIdx }
+            return true
+        case 125: // down
+            let newIdx = viewModel.appSelectorSelectedIndex + columnCount
+            if newIdx <= maxSelectorIndex { viewModel.appSelectorSelectedIndex = newIdx }
+            return true
+        default:
+            return nil // let TextField handle it
+        }
+    }
+
+    private var maxSelectorIndex: Int {
+        let count: Int
+        if viewModel.appSelectorMode == .app {
+            count = viewModel.filteredApps.count
+        } else if viewModel.selectorIsForStack {
+            count = viewModel.stackWindows.count
+        } else {
+            count = viewModel.filteredWindows.count
+        }
+        return max(0, count - 1)
+    }
+
+    private var hasSelectedLeafPane: Bool {
+        guard let root = viewModel.editingRootNode else { return false }
+        let path = viewModel.selectedNodePath
+        if path.isRoot {
+            return root.type != .columns && root.type != .rows
+        }
+        guard let node = path.node(in: root) else { return false }
+        return node.type != .columns && node.type != .rows
+    }
+
+    private func moveSelectedWindow(to address: CellAddress) {
+        guard let window = viewModel.selectedMoveWindow else { return }
+        let displays = viewModel.displays.isEmpty ? WindowManager.shared.getDisplays() : viewModel.displays
+        try? LayoutManager.shared.moveWindow(window, toCellAt: address, displays: displays)
+        viewModel.refreshRunningApps()
+    }
+
 }
 
 // MARK: - OverlayView
@@ -145,6 +266,10 @@ struct OverlayView: View {
                     Divider()
                     LayoutEditorPanel(viewModel: viewModel)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let window = viewModel.selectedMoveWindow {
+                        Divider()
+                        moveWindowStatusBar(window: window)
+                    }
                 }
             }
         }
@@ -238,7 +363,41 @@ struct OverlayView: View {
                     .onTapGesture { viewModel.hideCellPicker() }
                 CellPickerView(viewModel: viewModel, onDismiss: {})
             }
+            if viewModel.isAppSelectorVisible {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture { viewModel.hideAppSelector() }
+                AppSelectorView(viewModel: viewModel)
+            }
         }
+    }
+
+    // MARK: - Move Status Bar
+
+    private func moveWindowStatusBar(window: WTWindow) -> some View {
+        HStack(spacing: 8) {
+            // App icon
+            if let bundleId = window.bundleId,
+               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            }
+            Text("Moving:")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+            Text(window.title.isEmpty ? window.application : window.title)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Text("Press a cell number to move")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Toolbar Helpers

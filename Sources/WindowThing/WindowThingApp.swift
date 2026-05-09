@@ -126,10 +126,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editorItem.target = self
         menu.addItem(editorItem)
 
-        let moveItem = NSMenuItem(title: "Move Current Window…", action: #selector(showQuickMoveFromMenu), keyEquivalent: "")
-        moveItem.target = self
-        menu.addItem(moveItem)
-
         menu.addItem(NSMenuItem.separator())
 
         // Preferences
@@ -162,8 +158,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         showOverlay()
     }
 
-    @objc private func showQuickMoveFromMenu() {
-        toggleQuickMove()
+    @objc private func showEditorFromMenu() {
+        toggleOverlay()
     }
 
     @objc private func applyLayout(_ sender: NSMenuItem) {
@@ -223,7 +219,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = HotKey(key: key, modifiers: modifiers)
         hotKey?.keyDownHandler = { [weak self] in
             debugLog(" Hotkey pressed!")
-            self?.toggleQuickMove()
+            self?.toggleOverlay()
         }
         debugLog(" Hotkey registered: \(String(describing: hotKey))")
 

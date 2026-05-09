@@ -3,6 +3,13 @@ import AppKit
 import Combine
 import WindowThingCore
 
+// MARK: - App Selector Mode
+
+public enum AppSelectorMode: Equatable, Sendable {
+    case app
+    case window
+}
+
 // MARK: - OverlayViewModel
 
 public class OverlayViewModel: ObservableObject {
@@ -20,6 +27,9 @@ public class OverlayViewModel: ObservableObject {
     @Published public var runningWindows: [Window] = []
     @Published public var thumbnailRevision: Int = 0
 
+    /// The window that was focused when the editor opened — candidate for cell movement.
+    @Published public var selectedMoveWindow: Window?
+
     // Carousel
     @Published public var carouselOffset: Int = 0
     public let carouselPageSize = 3
@@ -29,6 +39,12 @@ public class OverlayViewModel: ObservableObject {
     @Published public var pendingMoveWindow: Window?
     @Published public var pickerCells: [IndexedCell] = []
     @Published public var pickerGhostPositions: [GhostCellPosition] = []
+
+    // App/Window selector state
+    @Published public var isAppSelectorVisible: Bool = false
+    @Published public var appSelectorMode: AppSelectorMode = .app
+    @Published public var appSelectorSearchText: String = ""
+    @Published public var appSelectorSelectedIndex: Int = 0
 
     // Undo
     public let undoManager = UndoManager()
@@ -342,6 +358,169 @@ public class OverlayViewModel: ObservableObject {
             }
         }
         hideCellPicker()
+    }
+
+    // MARK: - App/Window Selector
+
+    /// Whether the selected pane is a stack (changes selector behavior).
+    public var selectorIsForStack: Bool {
+        guard let root = editingRootNode else { return false }
+        let path = selectedNodePath
+        if path.isRoot { return root.type == .stack }
+        return path.node(in: root)?.type == .stack
+    }
+
+    public var filteredApps: [RunningAppInfo] {
+        let q = appSelectorSearchText.lowercased()
+        if q.isEmpty { return runningApps }
+        return runningApps.filter { $0.name.lowercased().contains(q) }
+    }
+
+    public var filteredWindows: [Window] {
+        let q = appSelectorSearchText.lowercased()
+        let windows = runningWindows.filter { $0.application != "WindowThing" }
+        if q.isEmpty { return windows }
+        return windows.filter {
+            $0.application.lowercased().contains(q) || $0.title.lowercased().contains(q)
+        }
+    }
+
+    /// Windows that belong in the stack (not pinned elsewhere in the layout).
+    public var stackWindows: [Window] {
+        guard let root = editingRootNode else { return [] }
+        let pinnedApps = collectPinnedApps(in: root)
+        let q = appSelectorSearchText.lowercased()
+        return runningWindows.filter { window in
+            if window.application == "WindowThing" { return false }
+            let isPinned = pinnedApps.contains { app in
+                if let bundleId = app.bundleId, window.bundleId == bundleId { return true }
+                if let name = app.application,
+                   window.application.localizedCaseInsensitiveCompare(name) == .orderedSame { return true }
+                return false
+            }
+            if isPinned { return false }
+            if q.isEmpty { return true }
+            return window.application.lowercased().contains(q) || window.title.lowercased().contains(q)
+        }
+    }
+
+    private func collectPinnedApps(in node: LayoutNode) -> [PinnedConfig] {
+        switch node.type {
+        case .pinned:
+            if let p = node.pinned { return [p] }
+            return []
+        case .columns:
+            return (node.columns ?? []).flatMap { collectPinnedApps(in: $0) }
+        case .rows:
+            return (node.rows ?? []).flatMap { collectPinnedApps(in: $0) }
+        default:
+            return []
+        }
+    }
+
+    public func showAppSelector() {
+        guard let root = editingRootNode else { return }
+        let path = selectedNodePath
+        // Verify it points to a leaf
+        if !path.isRoot {
+            guard let node = path.node(in: root) else { return }
+            if node.type == .columns || node.type == .rows { return }
+        } else if root.type == .columns || root.type == .rows {
+            return
+        }
+        refreshRunningApps()
+        appSelectorMode = .app
+        appSelectorSearchText = ""
+        appSelectorSelectedIndex = 0
+        isAppSelectorVisible = true
+    }
+
+    public func hideAppSelector() {
+        isAppSelectorVisible = false
+        appSelectorSearchText = ""
+    }
+
+    public func toggleAppSelectorMode() {
+        appSelectorMode = appSelectorMode == .app ? .window : .app
+        appSelectorSelectedIndex = 0
+    }
+
+    /// Apply the selection. For empty/pinned panes, pins the app. For stack, sets selectedMoveWindow.
+    public func applyAppSelectorSelection(at index: Int) {
+        if selectorIsForStack {
+            if appSelectorMode == .app {
+                applyStackAppSelection(at: index)
+            } else {
+                applyStackSelection(at: index)
+            }
+        } else if appSelectorMode == .app {
+            applyAppSelection(at: index)
+        } else {
+            applyWindowSelection(at: index)
+        }
+        hideAppSelector()
+    }
+
+    private func applyAppSelection(at index: Int) {
+        guard let root = editingRootNode,
+              let app = filteredApps[safe: index] else { return }
+        let currentNode = selectedNodePath.isRoot ? root : selectedNodePath.node(in: root)
+        guard let currentNode else { return }
+        let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
+        let newNode = LayoutNode(type: .pinned, percentage: currentNode.percentage, pinned: pinned)
+        if selectedNodePath.isRoot {
+            commitEdit(newNode)
+        } else if let updated = root.replacingNode(at: selectedNodePath.indices, with: newNode) {
+            commitEdit(updated)
+        }
+    }
+
+    private func applyWindowSelection(at index: Int) {
+        guard let root = editingRootNode,
+              let window = filteredWindows[safe: index] else { return }
+        let currentNode = selectedNodePath.isRoot ? root : selectedNodePath.node(in: root)
+        guard let currentNode else { return }
+        let pinned = PinnedConfig(
+            application: window.application,
+            bundleId: window.bundleId,
+            windowTitles: window.title.isEmpty ? nil : [window.title]
+        )
+        let newNode = LayoutNode(type: .pinned, percentage: currentNode.percentage, pinned: pinned)
+        if selectedNodePath.isRoot {
+            commitEdit(newNode)
+        } else if let updated = root.replacingNode(at: selectedNodePath.indices, with: newNode) {
+            commitEdit(updated)
+        }
+        // Bring window to front (behind overlay)
+        bringWindowToFront(window)
+    }
+
+    private func applyStackAppSelection(at index: Int) {
+        guard let app = filteredApps[safe: index] else { return }
+        // Find the first stack window matching this app
+        let window = stackWindows.first { w in
+            if let bundleId = app.bundleId, w.bundleId == bundleId { return true }
+            return w.application.localizedCaseInsensitiveCompare(app.name) == .orderedSame
+        }
+        if let window {
+            selectedMoveWindow = window
+            bringWindowToFront(window)
+        }
+    }
+
+    private func applyStackSelection(at index: Int) {
+        guard let window = stackWindows[safe: index] else { return }
+        selectedMoveWindow = window
+        bringWindowToFront(window)
+    }
+
+    private func bringWindowToFront(_ window: Window) {
+        let app = NSRunningApplication(processIdentifier: window.pid)
+        app?.activate(options: [])
+        // Re-activate our app after a brief delay so overlay stays on top
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // MARK: - Screen Sets

@@ -186,6 +186,53 @@ extension LayoutNode {
         }
     }
 
+    // MARK: - Leaf Index
+
+    /// Count the total number of leaf nodes in this subtree.
+    public var leafCount: Int {
+        switch type {
+        case .columns:
+            return (columns ?? []).reduce(0) { $0 + $1.leafCount }
+        case .rows:
+            return (rows ?? []).reduce(0) { $0 + $1.leafCount }
+        default:
+            return 1
+        }
+    }
+
+    /// Return the 1-based leaf index for the leaf at `path`, using depth-first ordering.
+    /// Returns nil if the path doesn't point to a leaf.
+    public func leafIndex(at path: NodePath) -> Int? {
+        leafIndexHelper(indices: path.indices[...], offset: 0)
+    }
+
+    private func leafIndexHelper(indices: ArraySlice<Int>, offset: Int) -> Int? {
+        if indices.isEmpty {
+            // We're at the target node; it must be a leaf
+            switch type {
+            case .columns, .rows: return nil
+            default: return offset + 1  // 1-based
+            }
+        }
+        guard let childIdx = indices.first else { return nil }
+        let children: [LayoutNode]
+        switch type {
+        case .columns: children = columns ?? []
+        case .rows: children = rows ?? []
+        default: return nil  // path goes deeper but this is a leaf
+        }
+        guard childIdx < children.count else { return nil }
+        // Count leaves in all preceding siblings
+        var precedingLeaves = 0
+        for i in 0..<childIdx {
+            precedingLeaves += children[i].leafCount
+        }
+        return children[childIdx].leafIndexHelper(
+            indices: indices.dropFirst(),
+            offset: offset + precedingLeaves
+        )
+    }
+
     // MARK: - Convenience Mutation Helpers (used by the layout editor)
 
     /// Return a copy of this node with a new percentage

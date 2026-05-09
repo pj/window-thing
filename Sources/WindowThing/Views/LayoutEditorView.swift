@@ -444,6 +444,11 @@ struct LayoutTileView: View {
 
     private var isSelected: Bool { path == selectedPath }
 
+    private var cellAddressLabel: String? {
+        guard let idx = rootNode.leafIndex(at: path) else { return nil }
+        return CellAddress.from(index: idx)?.stringValue
+    }
+
     private var leafTile: some View {
         Button {
             onSelect(path)
@@ -452,6 +457,19 @@ struct LayoutTileView: View {
                 tileBackground
                 tileContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .overlay(alignment: .topTrailing) {
+                if let label = cellAddressLabel {
+                    Text(label)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.accentColor.opacity(0.85))
+                        )
+                        .padding(4)
+                }
             }
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
