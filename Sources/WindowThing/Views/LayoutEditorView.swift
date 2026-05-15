@@ -120,9 +120,13 @@ struct LayoutEditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let layout = viewModel.editingLayout, layout.screenSets.count > 1 {
-                ScreenSetTabBar(viewModel: viewModel)
-                    .frame(height: 32)
+            if let layout = viewModel.editingLayout {
+                if layout.screenSets.count > 1 {
+                    ScreenSetTabBar(viewModel: viewModel)
+                        .frame(height: 28)
+                }
+                MonitorTabBar(viewModel: viewModel)
+                    .frame(height: 28)
                 Divider()
             }
             canvasArea
@@ -132,9 +136,16 @@ struct LayoutEditorPanel: View {
 
     /// Aspect ratio of the display this layout targets (width / height).
     private var displayAspectRatio: CGFloat {
-        // Use the primary display, or fall back to a typical 16:10 ratio
-        let primary = viewModel.displays.first(where: { $0.isMain }) ?? viewModel.displays.first
-        guard let d = primary, d.frame.height > 0 else { return 16.0 / 10.0 }
+        let key = viewModel.selectedMonitorKey
+        let display: Display?
+        if key == ScreenConfig.primaryKey {
+            display = viewModel.displays.first(where: { $0.isMain }) ?? viewModel.displays.first
+        } else {
+            display = viewModel.displays.first(where: { $0.name == key })
+                ?? viewModel.displays.first(where: { $0.isMain })
+                ?? viewModel.displays.first
+        }
+        guard let d = display, d.frame.height > 0 else { return 16.0 / 10.0 }
         return d.frame.width / d.frame.height
     }
 
@@ -1059,7 +1070,7 @@ struct ScreenSetTabBar: View {
                         .font(.system(size: 11, weight: selected ? .semibold : .regular))
                         .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 4)
                         .background(selected ? Color.accentColor.opacity(0.08) : Color.clear)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                         .buttonStyle(.plain)
@@ -1096,6 +1107,89 @@ struct ScreenSetTabBar: View {
             .help("Add screen set")
         }
         .background(.thinMaterial)
+    }
+}
+
+// MARK: - Monitor Tab Bar
+
+/// Tab bar showing one tab per monitor in the current screen set.
+/// Connected monitors are interactive; disconnected monitors are greyed out.
+struct MonitorTabBar: View {
+    @ObservedObject var viewModel: OverlayViewModel
+
+    private func displayLabel(for key: String) -> String {
+        key == ScreenConfig.primaryKey ? "Primary" : key
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Image(systemName: "display")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 8)
+                .padding(.trailing, 4)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(viewModel.monitorKeysForCurrentScreenSet, id: \.self) { key in
+                        let selected = viewModel.selectedMonitorKey == key
+                        let connected = viewModel.isMonitorConnected(key)
+
+                        Button(displayLabel(for: key)) {
+                            if connected {
+                                viewModel.selectMonitor(key)
+                            }
+                        }
+                        .font(.system(size: 11, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(
+                            !connected ? Color.secondary.opacity(0.5)
+                            : selected ? Color.accentColor
+                            : Color.secondary
+                        )
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            selected && connected
+                                ? Color.accentColor.opacity(0.08)
+                                : Color.clear
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .buttonStyle(.plain)
+                        .disabled(!connected)
+                        .help(connected ? displayLabel(for: key) : "\(displayLabel(for: key)) (disconnected)")
+                        .contextMenu {
+                            if key != ScreenConfig.primaryKey {
+                                Button("Remove Monitor") {
+                                    viewModel.removeMonitorFromScreenSet(key)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+
+            Spacer(minLength: 0)
+
+            // Add monitor button — shows connected displays not yet in this screen set
+            if !viewModel.availableDisplaysToAdd.isEmpty {
+                Menu {
+                    ForEach(viewModel.availableDisplaysToAdd, id: \.self) { name in
+                        Button(name) {
+                            viewModel.addMonitorToScreenSet(name)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus.display")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .padding(.trailing, 8)
+                .help("Add a connected display")
+            }
+        }
+        .background(.ultraThinMaterial)
     }
 }
 

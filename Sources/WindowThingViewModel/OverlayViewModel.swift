@@ -21,6 +21,7 @@ public class OverlayViewModel: ObservableObject {
     @Published public var recordingHotkeyLayoutId: UUID?
     @Published public var editingLayout: Layout?
     @Published public var selectedScreenSetIndex: Int = 0
+    @Published public var selectedMonitorKey: String = ScreenConfig.primaryKey
     @Published public var selectedNodePath: NodePath = .root
     @Published public var editingRootNode: LayoutNode?
     @Published public var runningApps: [RunningAppInfo] = []
@@ -109,6 +110,7 @@ public class OverlayViewModel: ObservableObject {
     public func startEditing(_ layout: Layout) {
         editingLayout = layout
         selectedScreenSetIndex = 0
+        selectedMonitorKey = ScreenConfig.primaryKey
         selectedNodePath = .root
         refreshEditingRootNode()
     }
@@ -133,6 +135,7 @@ public class OverlayViewModel: ObservableObject {
 
     public func selectScreenSet(_ index: Int) {
         selectedScreenSetIndex = index
+        selectedMonitorKey = ScreenConfig.primaryKey
         selectedNodePath = .root
         refreshEditingRootNode()
     }
@@ -149,8 +152,14 @@ public class OverlayViewModel: ObservableObject {
             editingRootNode = nil
             return
         }
-        let key = preferredMonitorKey(for: screenSet)
-        editingRootNode = screenSet.layouts[key] ?? screenSet.layouts.values.first
+        // Use selectedMonitorKey if it exists in this screen set, otherwise fall back
+        if screenSet.layouts[selectedMonitorKey] != nil {
+            editingRootNode = screenSet.layouts[selectedMonitorKey]
+        } else {
+            let fallback = preferredMonitorKey(for: screenSet)
+            selectedMonitorKey = fallback
+            editingRootNode = screenSet.layouts[fallback] ?? screenSet.layouts.values.first
+        }
     }
 
     public func preferredMonitorKey(for screenSet: ScreenConfig) -> String {
@@ -164,8 +173,7 @@ public class OverlayViewModel: ObservableObject {
     private func applyRootNodeUpdate(_ node: LayoutNode) {
         guard var layout = editingLayout,
               selectedScreenSetIndex < layout.screenSets.count else { return }
-        let key = preferredMonitorKey(for: layout.screenSets[selectedScreenSetIndex])
-        layout.screenSets[selectedScreenSetIndex].layouts[key] = node
+        layout.screenSets[selectedScreenSetIndex].layouts[selectedMonitorKey] = node
         editingLayout = layout
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
             layouts[idx] = layout
@@ -521,6 +529,67 @@ public class OverlayViewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    // MARK: - Monitor Selection
+
+    /// Keys in the current screen set, sorted with $PRIMARY first.
+    public var monitorKeysForCurrentScreenSet: [String] {
+        guard let layout = editingLayout,
+              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return [] }
+        let keys = Array(screenSet.layouts.keys)
+        return keys.sorted { a, b in
+            if a == ScreenConfig.primaryKey { return true }
+            if b == ScreenConfig.primaryKey { return false }
+            return a < b
+        }
+    }
+
+    /// Display names of currently connected monitors.
+    public var connectedDisplayNames: Set<String> {
+        Set(displays.map { $0.name })
+    }
+
+    /// Whether a monitor key corresponds to a currently connected display.
+    public func isMonitorConnected(_ key: String) -> Bool {
+        if key == ScreenConfig.primaryKey {
+            return !displays.isEmpty
+        }
+        return connectedDisplayNames.contains(key)
+    }
+
+    /// Connected displays not yet in the current screen set.
+    public var availableDisplaysToAdd: [String] {
+        let currentKeys = Set(monitorKeysForCurrentScreenSet)
+        return displays
+            .filter { !$0.isMain && !currentKeys.contains($0.name) }
+            .map { $0.name }
+            .sorted()
+    }
+
+    public func selectMonitor(_ key: String) {
+        selectedMonitorKey = key
+        selectedNodePath = .root
+        refreshEditingRootNode()
+    }
+
+    public func addMonitorToScreenSet(_ displayName: String) {
+        guard var layout = editingLayout,
+              let updated = layout.addingDisplay(key: displayName, toScreenSetAt: selectedScreenSetIndex) else { return }
+        syncEditingLayout(updated)
+        selectedMonitorKey = displayName
+        refreshEditingRootNode()
+    }
+
+    public func removeMonitorFromScreenSet(_ key: String) {
+        guard key != ScreenConfig.primaryKey,
+              var layout = editingLayout,
+              let updated = layout.removingDisplay(key: key, fromScreenSetAt: selectedScreenSetIndex) else { return }
+        syncEditingLayout(updated)
+        if selectedMonitorKey == key {
+            selectedMonitorKey = ScreenConfig.primaryKey
+        }
+        refreshEditingRootNode()
     }
 
     // MARK: - Screen Sets
