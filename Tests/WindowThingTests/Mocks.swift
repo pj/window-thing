@@ -265,3 +265,34 @@ struct TestFixtures {
         ]
     )
 }
+
+// MARK: - Mock App Driver
+
+public final class MockAppDriver: AppDriver, @unchecked Sendable {
+    public let driverType: String
+    public var paneState: AppPaneState
+    public var appliedSublayouts: [LayoutNode] = []
+    public var focusedPanes: [Int] = []
+    public var currentFocusedIndex: Int?
+
+    public init(driverType: String = "mock", paneState: AppPaneState) {
+        self.driverType = driverType
+        self.paneState = paneState
+    }
+
+    public func queryPaneState() async throws -> AppPaneState {
+        paneState
+    }
+
+    public func applySublayout(_ layout: LayoutNode) async throws {
+        appliedSublayouts.append(layout)
+    }
+
+    public func focusPane(at index: Int) async throws {
+        focusedPanes.append(index)
+    }
+
+    public func focusedPaneIndex() async throws -> Int? {
+        currentFocusedIndex
+    }
+}

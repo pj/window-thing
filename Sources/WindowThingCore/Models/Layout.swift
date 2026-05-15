@@ -62,6 +62,51 @@ extension CellAddress: Codable {
     }
 }
 
+// MARK: - Sub-Cell Address
+
+/// A two-level address: a parent cell plus a 1-based sub-index within its sublayout.
+/// String form: "3.1", "a.2", etc.
+public struct SubCellAddress: Hashable, Sendable, Codable {
+    public let parent: CellAddress
+    public let subIndex: Int  // 1-based
+
+    public init(parent: CellAddress, subIndex: Int) {
+        self.parent = parent
+        self.subIndex = subIndex
+    }
+
+    public var stringValue: String {
+        "\(parent.stringValue).\(subIndex)"
+    }
+
+    public init?(string: String) {
+        let parts = string.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2,
+              let parent = CellAddress(string: String(parts[0])),
+              let sub = Int(parts[1]),
+              sub >= 1 else {
+            return nil
+        }
+        self.parent = parent
+        self.subIndex = sub
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let s = try container.decode(String.self)
+        guard let addr = SubCellAddress(string: s) else {
+            throw DecodingError.dataCorruptedError(in: container,
+                debugDescription: "Invalid SubCellAddress: '\(s)'")
+        }
+        self = addr
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(stringValue)
+    }
+}
+
 // MARK: - Layout Types (matching modal-commander structure)
 
 public enum LayoutType: String, Codable, Sendable {
@@ -73,21 +118,43 @@ public enum LayoutType: String, Codable, Sendable {
     case empty
 }
 
+/// Configuration for an app's internal pane sublayout.
+public struct SublayoutConfig: Codable, Equatable, Sendable {
+    /// Identifier for the app driver (e.g. "tmux", "vim").
+    public let driverType: String
+    /// The internal pane layout tree — reuses LayoutNode (.columns, .rows, .empty are meaningful).
+    /// Boxed to break the recursive value type cycle (SublayoutConfig → LayoutNode → PinnedConfig → SublayoutConfig).
+    public let layout: Box<LayoutNode>
+    /// Driver-specific target identifier (e.g. "main:0" for tmux session:window).
+    public let target: String?
+
+    public var layoutNode: LayoutNode { layout.value }
+
+    public init(driverType: String, layout: LayoutNode, target: String? = nil) {
+        self.driverType = driverType
+        self.layout = Box(layout)
+        self.target = target
+    }
+}
+
 public struct PinnedConfig: Codable, Equatable, Sendable {
     public let application: String?
     public let bundleId: String?
     /// Specific window titles to pin. nil or empty = all windows of the app.
     public let windowTitles: [String]?
+    /// Optional sublayout describing internal pane structure for app integration.
+    public let sublayout: SublayoutConfig?
 
-    public init(application: String?, bundleId: String?, windowTitles: [String]? = nil) {
+    public init(application: String?, bundleId: String?, windowTitles: [String]? = nil, sublayout: SublayoutConfig? = nil) {
         self.application = application
         self.bundleId = bundleId
         self.windowTitles = windowTitles?.isEmpty == true ? nil : windowTitles
+        self.sublayout = sublayout
     }
 
     // Backward-compatible YAML decoding: accepts both `windowTitles` (new) and `windowTitle` (old).
     enum CodingKeys: String, CodingKey {
-        case application, bundleId, windowTitles, windowTitle
+        case application, bundleId, windowTitles, windowTitle, sublayout
     }
 
     public init(from decoder: any Decoder) throws {
@@ -101,6 +168,7 @@ public struct PinnedConfig: Codable, Equatable, Sendable {
         } else {
             windowTitles = nil
         }
+        sublayout = try c.decodeIfPresent(SublayoutConfig.self, forKey: .sublayout)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -108,6 +176,7 @@ public struct PinnedConfig: Codable, Equatable, Sendable {
         try c.encodeIfPresent(application, forKey: .application)
         try c.encodeIfPresent(bundleId, forKey: .bundleId)
         try c.encodeIfPresent(windowTitles, forKey: .windowTitles)
+        try c.encodeIfPresent(sublayout, forKey: .sublayout)
     }
 }
 
@@ -176,11 +245,11 @@ public struct LayoutNode: Codable, Equatable, Sendable {
         )
     }
 
-    public static func pinned(app: String? = nil, bundleId: String? = nil, windowTitles: [String]? = nil, percentage: Double = 100) -> LayoutNode {
+    public static func pinned(app: String? = nil, bundleId: String? = nil, windowTitles: [String]? = nil, percentage: Double = 100, sublayout: SublayoutConfig? = nil) -> LayoutNode {
         LayoutNode(
             type: .pinned,
             percentage: percentage,
-            pinned: PinnedConfig(application: app, bundleId: bundleId, windowTitles: windowTitles)
+            pinned: PinnedConfig(application: app, bundleId: bundleId, windowTitles: windowTitles, sublayout: sublayout)
         )
     }
 
