@@ -108,11 +108,18 @@ struct QuickMoveView: View {
             }
         }
         .background {
+            // glassEffect() only exists in the macOS 26 SDK (Swift 6.2), so the
+            // call has to be compiled out for older toolchains — CI runners and
+            // the test VM still ship Xcode 16 / the macOS 15 SDK.
+            #if compiler(>=6.2)
             if #available(macOS 26, *) {
                 RoundedRectangle(cornerRadius: 14).glassEffect()
             } else {
                 RoundedRectangle(cornerRadius: 14).fill(.regularMaterial)
             }
+            #else
+            RoundedRectangle(cornerRadius: 14).fill(.regularMaterial)
+            #endif
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .onAppear { layouts = LayoutManager.shared.layouts }

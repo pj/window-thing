@@ -29,5 +29,8 @@ result-*
 
 .direnv
 
+# VM screenshot output (regenerate with vm/capture-screenshots.sh)
+vm/screenshots/
+
 # Secrets/config (keep templates)
 # Don't ignore config.yaml as we want the example

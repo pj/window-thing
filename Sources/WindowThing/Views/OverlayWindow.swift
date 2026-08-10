@@ -81,9 +81,14 @@ class OverlayWindow: NSWindow {
         self.orderOut(nil)
     }
 
+    /// Set while capturing screenshots: the overlay must stay put even though
+    /// nothing is holding key focus in an automated session.
+    var staysVisibleWhenInactive = false
+
     override func resignKey() {
         super.resignKey()
         // Close when the user clicks away
+        guard !staysVisibleWhenInactive else { return }
         hideOverlay()
     }
 

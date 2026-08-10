@@ -62,6 +62,39 @@ This creates a local VM named `windowthing-test` with:
 
 ---
 
+## UI Screenshots
+
+```bash
+./vm/capture-screenshots.sh                    # all scenes
+./vm/capture-screenshots.sh --scene overlay    # just one
+./vm/capture-screenshots.sh --skip-build       # reuse the VM's existing build
+./vm/capture-screenshots.sh --keep             # leave the VM up afterwards
+```
+
+Output lands in `vm/screenshots/<scene>.png` at 3840x2400 (1920x1200 HiDPI).
+Scenes: `overlay`, `quickmove`, `onboarding`, `settings`.
+
+The VM has a virtual WindowServer, so the app renders and `screencapture` works
+even under `tart run --no-graphics`. Each scene is opened by launching the app
+with `--screenshot <scene>`, which presents that screen 1.5s after launch and
+suppresses first-run onboarding so it can't cover the requested scene.
+
+To watch or click through anything by hand, start the VM with its display
+attached first, then capture against the running VM:
+
+```bash
+tart run windowthing-test &                    # opens a VM window
+./vm/capture-screenshots.sh --keep
+```
+
+**Toolchain note**: the VM ships Xcode 16.4 (macOS 15 SDK) while a current
+developer machine has Xcode 26. Anything from a newer SDK — `glassEffect()`,
+for instance — must sit behind `#if compiler(>=6.2)` or the VM (and the
+`macos-14` CI runners) will fail to build the app target. The VM therefore
+renders the pre-macOS-26 fallback path, not Liquid Glass.
+
+---
+
 ## Accessibility TCC Permissions
 
 macOS requires explicit permission for any process that reads or moves windows via the Accessibility API.
@@ -105,8 +138,11 @@ tart stop windowthing-test
 vm/
 ├── README.md
 ├── run-tests.sh                  # Main test runner
+├── capture-screenshots.sh        # UI screenshot capture
+├── screenshots/                  # Captured PNGs (output)
 ├── scripts/
 │   ├── grant-tcc-access.sh       # TCC Accessibility grant script (run inside VM)
+│   ├── set-display-mode.swift    # Sets the guest's display resolution
 │   └── create-virtual-display.swift  # CGVirtualDisplay second-monitor helper
 └── packer/
     ├── windowthing-test.pkr.hcl  # Packer template

@@ -43,6 +43,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var overlayWindow: OverlayWindow?
     var quickMoveWindow: QuickMoveWindow?
     var onboardingWindow: OnboardingWindow?
+    /// Retained only in --screenshot settings mode; see showSettingsForScreenshot().
+    var screenshotSettingsWindow: NSWindow?
     var hotKey: HotKey?
     var reloadConfigHotKey: HotKey?
     var openConfigHotKey: HotKey?
@@ -68,15 +70,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Request accessibility permissions
         requestAccessibilityPermissions()
 
-        // Show first-run onboarding if not yet completed
-        if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+        // Show first-run onboarding if not yet completed.
+        // Under --screenshot the requested scene decides what appears, so the
+        // first-run window can't end up covering it.
+        if screenshotScene == nil, !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
             showOnboarding()
         }
 
         // Setup monitoring for automatic layout reconciliation
         setupMonitoring()
 
+        presentScreenshotScene()
+
         debugLog(" Setup complete")
+    }
+
+    /// The scene named by `--screenshot <overlay|quickmove|settings|onboarding>`,
+    /// or nil for a normal launch.
+    private var screenshotScene: String? {
+        let args = CommandLine.arguments
+        guard let flagIndex = args.firstIndex(of: "--screenshot"),
+              flagIndex + 1 < args.count else { return nil }
+        return args[flagIndex + 1]
+    }
+
+    /// Opens the named UI scene straight after launch so screenshots can be
+    /// driven non-interactively (see `vm/capture-screenshots.sh`).
+    private func presentScreenshotScene() {
+        guard let scene = screenshotScene else { return }
+
+        // Give the status item and window list a beat to settle before presenting.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            // showSettingsWindow: is a no-op unless the app is already active.
+            NSApp.activate(ignoringOtherApps: true)
+            switch scene {
+            case "overlay":
+                self.showOverlay()
+                // Nothing holds key focus in an automated session, and the
+                // overlay hides itself on resignKey — pin it open instead.
+                self.overlayWindow?.staysVisibleWhenInactive = true
+            case "quickmove":   self.toggleQuickMove()
+            case "onboarding":  self.showOnboarding()
+            case "settings":    self.showSettingsForScreenshot()
+            default:            debugLog("Unknown screenshot scene: \(scene)")
+            }
+            NSApp.activate(ignoringOtherApps: true)
+
+            // Layout reconciliation can push our own window behind the windows
+            // it just arranged; float it back to the front for the capture.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                for window in NSApp.windows where window.isVisible {
+                    window.level = .floating
+                    window.orderFrontRegardless()
+                }
+            }
+        }
     }
 
     private func setupStatusItem() {
@@ -383,6 +432,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func hideOverlay() {
         overlayWindow?.hideOverlay()
+    }
+
+    /// Hosts `SettingsView` in a plain window for screenshots. SwiftUI's
+    /// `Settings` scene is only reachable through `showSettingsWindow:`, which
+    /// does nothing for an unbundled accessory binary — the content is the same.
+    private func showSettingsForScreenshot() {
+        let size = NSSize(width: 500, height: 400)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "WindowThing Settings"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: SettingsView())
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        screenshotSettingsWindow = window
     }
 
     private func showOnboarding() {
