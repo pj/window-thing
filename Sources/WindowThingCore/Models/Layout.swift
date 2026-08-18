@@ -308,17 +308,43 @@ public struct ScreenConfig: Codable, Equatable, Sendable {
 
 // MARK: - Layout Definition
 
+/// How a layout treats a multi-display setup.
+public enum DisplayScope: String, Codable, Sendable {
+    /// Every display draws from one pool of windows, and the layout has a single
+    /// stack wherever it happens to sit. Moving a window between screens is just
+    /// pinning it to a pane on the other screen.
+    case shared
+
+    /// Each display keeps to its own windows: a display's panes only claim
+    /// windows already on it, and its leftovers go to its own stack. Nothing
+    /// crosses screens on its own.
+    case perMonitor
+}
+
 public struct Layout: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String
     public var quickKey: String?
     public var screenSets: [ScreenConfig]
+    /// Optional so layouts written before this existed still decode; absent
+    /// means `.shared`, which is what they behaved as.
+    public var displayScope: DisplayScope?
 
-    public init(id: UUID = UUID(), name: String, quickKey: String? = nil, screenSets: [ScreenConfig] = []) {
+    /// The scope to actually calculate with.
+    public var effectiveDisplayScope: DisplayScope { displayScope ?? .shared }
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        quickKey: String? = nil,
+        screenSets: [ScreenConfig] = [],
+        displayScope: DisplayScope? = nil
+    ) {
         self.id = id
         self.name = name
         self.quickKey = quickKey
         self.screenSets = screenSets
+        self.displayScope = displayScope
     }
 
     // Find the best matching screen set for current display configuration

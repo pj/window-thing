@@ -18,11 +18,35 @@ public class WindowManager: WindowManaging {
 
     // MARK: - Display Management
 
+    /// Convert a screen's Cocoa frame into the global coordinate space windows
+    /// live in.
+    ///
+    /// `NSScreen.frame` is Cocoa: origin bottom-left of the primary screen, y
+    /// increasing upwards. Window frames — read from `CGWindowListCopyWindowInfo`
+    /// and written back through `kAXPositionAttribute` — are global CG: origin
+    /// top-left of the primary screen, y increasing downwards. The two agree
+    /// only on the primary screen itself, so without this a layout places
+    /// windows at the wrong height on every other display.
+    public static func globalFrame(
+        forScreenFrame cocoa: CGRect,
+        primaryHeight: CGFloat
+    ) -> WindowFrame {
+        WindowFrame(
+            x: cocoa.minX,
+            y: primaryHeight - cocoa.maxY,
+            width: cocoa.width,
+            height: cocoa.height
+        )
+    }
+
     public func getDisplays() -> [Display] {
         var displays: [Display] = []
 
+        // The primary screen is the one with the menu bar, always first and
+        // always at the Cocoa origin — its height is the flip axis.
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+
         for (index, screen) in NSScreen.screens.enumerated() {
-            let screenFrame = screen.frame
             let isMain = screen == NSScreen.main
 
             // Get display name from localized name
@@ -31,7 +55,10 @@ public class WindowManager: WindowManaging {
             displays.append(Display(
                 id: index,
                 name: name,
-                frame: WindowFrame(from: screenFrame),
+                frame: Self.globalFrame(
+                    forScreenFrame: screen.frame,
+                    primaryHeight: primaryHeight
+                ),
                 isMain: isMain
             ))
         }

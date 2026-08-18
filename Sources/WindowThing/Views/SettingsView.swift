@@ -1,4 +1,5 @@
 import SwiftUI
+import HotKey
 import WindowThingCore
 
 struct SettingsView: View {
@@ -12,17 +13,14 @@ struct SettingsView: View {
                 }
                 .tag(0)
 
-            LayoutsSettingsView()
-                .tabItem {
-                    Label("Layouts", systemImage: "rectangle.split.3x3")
-                }
-                .tag(1)
+            // Layouts are listed, applied and edited in the Show Layout surface —
+            // no second place to manage them.
 
             AboutView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
-                .tag(2)
+                .tag(1)
         }
         .frame(width: 500, height: 400)
     }
@@ -43,12 +41,12 @@ struct GeneralSettingsView: View {
 
             Section("Activation Hotkey") {
                 HStack {
-                    Text("Current: ⇧⌘Space")
+                    Text("Current: \(activationHotKeyLabel)")
                         .foregroundColor(.secondary)
                     Spacer()
-                    Button("Change...") {
-                        // TODO: Implement hotkey recorder
-                    }
+                    Text("Edit in config file")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -83,57 +81,23 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .padding()
     }
-}
 
-// MARK: - Layouts Settings
-
-struct LayoutsSettingsView: View {
-    @State private var layouts: [WTLayout] = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Configured Layouts")
-                .font(.headline)
-
-            if layouts.isEmpty {
-                Text("No layouts configured. Edit the config file to add layouts.")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(layouts) { layout in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(layout.name)
-                                .font(.body)
-                            if let quickKey = layout.quickKey {
-                                Text("Quick key: \(quickKey)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Button("Apply") {
-                            LayoutManager.shared.applyLayout(layout)
-                        }
-                    }
-                }
-            }
-
-            HStack {
-                Button("Edit Config") {
-                    let configPath = ConfigManager.shared.configFilePath
-                    NSWorkspace.shared.open(configPath)
-                }
-                Spacer()
-                Button("Refresh") {
-                    layouts = LayoutManager.shared.layouts
-                }
+    /// Render the configured hotkey rather than a literal — the two drifted
+    /// apart once the default changed.
+    private var activationHotKeyLabel: String {
+        let config = ConfigManager.shared.config.activationHotKey
+        var label = ""
+        for modifier in config.modifiers {
+            switch modifier.lowercased() {
+            case "control", "ctrl":      label += "⌃"
+            case "option", "opt", "alt": label += "⌥"
+            case "shift":                label += "⇧"
+            case "command", "cmd":       label += "⌘"
+            default:                     break
             }
         }
-        .padding()
-        .onAppear {
-            layouts = LayoutManager.shared.layouts
-        }
+        label += Key(carbonKeyCode: config.keyCode).map(String.init(describing:)) ?? "?"
+        return label
     }
 }
 
@@ -150,7 +114,9 @@ struct AboutView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Version 0.1.0")
+            // Read from the bundle so this can't drift from what was shipped.
+            // Falls back for `swift run`, which has no Info.plist.
+            Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev")")
                 .foregroundColor(.secondary)
 
             Text("A powerful window management app for macOS")

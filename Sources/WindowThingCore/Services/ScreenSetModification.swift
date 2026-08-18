@@ -92,3 +92,50 @@ extension Layout {
         return copy
     }
 }
+
+// MARK: - Stack invariant
+
+public extension ScreenConfig {
+    /// Every monitor holding a stack. A layout is meant to have exactly one
+    /// across all its displays — that single stack is where unpinned windows go.
+    var stackKeys: [String] {
+        layouts
+            .filter { $0.value.findStackLocation() != nil }
+            .keys
+            .sorted { lhs, _ in lhs == ScreenConfig.primaryKey }
+    }
+
+    var containsStack: Bool { !stackKeys.isEmpty }
+
+    /// A copy with any surplus stacks demoted to empty panes, keeping one.
+    ///
+    /// The primary display keeps it when it has one, since that's where it
+    /// usually belongs; otherwise the first monitor holding one does.
+    func deduplicatingStacks() -> ScreenConfig {
+        let keys = stackKeys
+        guard keys.count > 1 else { return self }
+
+        let keeper = keys[0]
+        var copy = self
+        for key in keys.dropFirst() {
+            guard let node = copy.layouts[key],
+                  let indices = node.findStackLocation() else { continue }
+            let path = NodePath(indices)
+            let percentage = (path.isRoot ? node : path.node(in: node))?.percentage
+            copy.layouts[key] = node.replacingNode(
+                at: indices,
+                with: .empty(percentage: percentage ?? 100)
+            ) ?? node
+        }
+        return copy
+    }
+}
+
+public extension Layout {
+    /// A copy with the one-stack-per-screen-set invariant restored.
+    func deduplicatingStacks() -> Layout {
+        var copy = self
+        copy.screenSets = screenSets.map { $0.deduplicatingStacks() }
+        return copy
+    }
+}

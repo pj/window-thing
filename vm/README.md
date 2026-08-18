@@ -66,13 +66,24 @@ This creates a local VM named `windowthing-test` with:
 
 ```bash
 ./vm/capture-screenshots.sh                    # all scenes
-./vm/capture-screenshots.sh --scene overlay    # just one
+./vm/capture-screenshots.sh --scene space      # just one
+./vm/capture-screenshots.sh --dual-display     # two screens, one shot each
 ./vm/capture-screenshots.sh --skip-build       # reuse the VM's existing build
 ./vm/capture-screenshots.sh --keep             # leave the VM up afterwards
 ```
 
 Output lands in `vm/screenshots/<scene>.png` at 3840x2400 (1920x1200 HiDPI).
-Scenes: `overlay`, `quickmove`, `onboarding`, `settings`.
+Scenes: `space`, `quickmove`, `onboarding`, `settings`.
+
+`space` is the activation surface — the window browser and the layout editor are
+one screen now, so there is no separate editor scene. `overlay` is still accepted
+as an alias for it so older invocations keep working.
+
+With `--dual-display` a virtual second screen is added first (the same
+`CGVirtualDisplay` helper `run-tests.sh --dual-display` uses) and each scene is
+captured once per screen, as `<scene>-display1.png` and `<scene>-display2.png`.
+That is the only way to check the per-screen overlays, since the surface puts a
+separate window on every display.
 
 The VM has a virtual WindowServer, so the app renders and `screencapture` works
 even under `tart run --no-graphics`. Each scene is opened by launching the app

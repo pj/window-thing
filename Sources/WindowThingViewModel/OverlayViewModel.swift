@@ -46,6 +46,18 @@ public class OverlayViewModel: ObservableObject {
     @Published public var appSelectorMode: AppSelectorMode = .app
     @Published public var appSelectorSearchText: String = ""
     @Published public var appSelectorSelectedIndex: Int = 0
+    /// The pane the open selector will act on, fixed when it opens.
+    @Published public var appSelectorTargetPath: NodePath = .root
+
+    /// Bumped each time the surface is shown. Views key transient state off it
+    /// so a fresh presentation starts clean — the window is retained between
+    /// showings, so SwiftUI state would otherwise survive from last time.
+    @Published public var presentationCount: Int = 0
+
+    /// True while a text field inside the surface holds focus. The overlay
+    /// window intercepts plain keystrokes as commands — a bare letter is a cell
+    /// address — so it has to stand down while those keystrokes are text.
+    @Published public var isTextFieldFocused: Bool = false
 
     // Undo
     public let undoManager = UndoManager()
@@ -162,6 +174,22 @@ public class OverlayViewModel: ObservableObject {
         }
     }
 
+    /// The tree for one monitor of the current screen set.
+    ///
+    /// Per-screen overlays each render their own display, so they read by key
+    /// rather than through `selectedMonitorKey`, which is a single cursor and
+    /// can only describe one of them.
+    public func rootNode(forMonitor key: String) -> LayoutNode? {
+        guard let layout = editingLayout,
+              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return nil }
+        return screenSet.layouts[key]
+    }
+
+    /// Whether the current screen set describes this monitor at all.
+    public func hasLayout(forMonitor key: String) -> Bool {
+        rootNode(forMonitor: key) != nil
+    }
+
     public func preferredMonitorKey(for screenSet: ScreenConfig) -> String {
         screenSet.layouts.keys.contains(ScreenConfig.primaryKey)
             ? ScreenConfig.primaryKey
@@ -170,15 +198,22 @@ public class OverlayViewModel: ObservableObject {
 
     // MARK: - Node Updates (internal)
 
-    private func applyRootNodeUpdate(_ node: LayoutNode) {
+    private func applyRootNodeUpdate(_ node: LayoutNode, forMonitor key: String) {
         guard var layout = editingLayout,
               selectedScreenSetIndex < layout.screenSets.count else { return }
-        layout.screenSets[selectedScreenSetIndex].layouts[selectedMonitorKey] = node
+        layout.screenSets[selectedScreenSetIndex].layouts[key] = node
         editingLayout = layout
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
             layouts[idx] = layout
         }
-        editingRootNode = node
+        // `editingRootNode` tracks the cursor monitor only.
+        if key == selectedMonitorKey {
+            editingRootNode = node
+        }
+    }
+
+    private func applyRootNodeUpdate(_ node: LayoutNode) {
+        applyRootNodeUpdate(node, forMonitor: selectedMonitorKey)
     }
 
     // MARK: - Live Update (drag, no undo)
@@ -187,33 +222,107 @@ public class OverlayViewModel: ObservableObject {
         applyRootNodeUpdate(node)
     }
 
+    public func updateRootNodeLive(_ node: LayoutNode, forMonitor key: String) {
+        applyRootNodeUpdate(node, forMonitor: key)
+    }
+
     // MARK: - Drag Snapshot
 
     public func captureDragSnapshot() {
         preDragSnapshot = editingRootNode
     }
 
+    public func captureDragSnapshot(forMonitor key: String) {
+        preDragSnapshot = rootNode(forMonitor: key)
+    }
+
+    /// Commit trees for several monitors as one undoable edit. The stack is a
+    /// property of the whole layout, so moving it between screens has to change
+    /// two monitors at once or the layout briefly has none — or two.
+    public func commitEdits(_ updates: [String: LayoutNode], actionName: String) {
+        guard !updates.isEmpty else { return }
+
+        let previous = updates.keys.reduce(into: [String: LayoutNode]()) { result, key in
+            if let node = rootNode(forMonitor: key) { result[key] = node }
+        }
+        undoManager.registerUndo(withTarget: self) { vm in
+            vm.commitEdits(previous, actionName: actionName)
+        }
+        undoManager.setActionName(actionName)
+
+        for (key, node) in updates {
+            applyRootNodeUpdate(node, forMonitor: key)
+        }
+        autoSave()
+    }
+
     public func commitDragFromSnapshot(to finalNode: LayoutNode) {
-        let prev = preDragSnapshot ?? editingRootNode
+        commitDragFromSnapshot(to: finalNode, forMonitor: selectedMonitorKey)
+    }
+
+    public func commitDragFromSnapshot(to finalNode: LayoutNode, forMonitor key: String) {
+        let prev = preDragSnapshot ?? rootNode(forMonitor: key)
         preDragSnapshot = nil
         undoManager.registerUndo(withTarget: self) { vm in
-            vm.commitEdit(prev ?? finalNode, actionName: "Resize")
+            vm.commitEdit(prev ?? finalNode, forMonitor: key, actionName: "Resize")
         }
         undoManager.setActionName("Resize")
-        applyRootNodeUpdate(finalNode)
+        applyRootNodeUpdate(finalNode, forMonitor: key)
         autoSave()
     }
 
     // MARK: - Committed Edit (undo + implicit save)
 
     public func commitEdit(_ node: LayoutNode, actionName: String = "Edit Layout") {
-        let prevNode = editingRootNode
+        commitEdit(node, forMonitor: selectedMonitorKey, actionName: actionName)
+    }
+
+    public func commitEdit(
+        _ node: LayoutNode,
+        forMonitor key: String,
+        actionName: String = "Edit Layout"
+    ) {
+        let prevNode = rootNode(forMonitor: key)
         undoManager.registerUndo(withTarget: self) { vm in
-            vm.commitEdit(prevNode ?? node, actionName: actionName)
+            vm.commitEdit(prevNode ?? node, forMonitor: key, actionName: actionName)
         }
         undoManager.setActionName(actionName)
-        applyRootNodeUpdate(node)
+        applyRootNodeUpdate(node, forMonitor: key)
         autoSave()
+    }
+
+    // MARK: - Layout Rename
+    //
+    // The draft lives here rather than in the pill view so that a click landing
+    // anywhere else in the window can commit it — an AppKit-hosted SwiftUI text
+    // field doesn't resign focus just because something non-focusable was hit.
+
+    @Published public var renameDraft: String = ""
+
+    public func beginRename(_ layout: Layout) {
+        renameDraft = layout.name
+        renamingLayoutId = layout.id
+    }
+
+    /// Apply the draft name. No-op unless a rename is in progress.
+    public func commitRename() {
+        guard let id = renamingLayoutId else { return }
+        renamingLayoutId = nil
+        guard let index = layouts.firstIndex(where: { $0.id == id }) else { return }
+
+        let trimmed = renameDraft.trimmingCharacters(in: .whitespaces)
+        layouts[index].name = trimmed.isEmpty ? "Untitled" : trimmed
+
+        // Renaming a layout must not make it the one being edited.
+        if editingLayout?.id == id {
+            editingLayout?.name = layouts[index].name
+        }
+        layoutManager.updateLayout(layouts[index])
+        configManager.saveLayouts(layouts)
+    }
+
+    public func cancelRename() {
+        renamingLayoutId = nil
     }
 
     // MARK: - Hotkey Recording
@@ -284,7 +393,7 @@ public class OverlayViewModel: ObservableObject {
         layouts.append(newLayout)
         configManager.saveLayouts(layouts)
         selectLayout(at: layouts.count - 1)
-        renamingLayoutId = newLayout.id
+        beginRename(newLayout)
     }
 
     /// Duplicate `layout` with a new UUID and name suffix, insert after the original.
@@ -306,15 +415,15 @@ public class OverlayViewModel: ObservableObject {
         }
     }
 
-    /// Delete `layout`. Switches editor to the nearest remaining layout.
+    /// Delete `layout` and switch to the last remaining one. Falling back to a
+    /// layout that definitely exists — rather than the deleted one's index —
+    /// keeps the overlay on a valid selection instead of closing.
     public func deleteLayout(_ layout: Layout) {
         guard layouts.count > 1 else { return }
-        let idx = layouts.firstIndex(where: { $0.id == layout.id }) ?? 0
         layouts.removeAll { $0.id == layout.id }
         originalLayouts = layouts
         configManager.saveLayouts(layouts)
-        let nextIdx = min(idx, layouts.count - 1)
-        selectLayout(at: nextIdx)
+        selectLayout(at: layouts.count - 1)
     }
 
     // MARK: - Cell Picker
@@ -370,12 +479,16 @@ public class OverlayViewModel: ObservableObject {
 
     // MARK: - App/Window Selector
 
-    /// Whether the selected pane is a stack (changes selector behavior).
+    /// Whether the pane the selector is acting on is a stack (changes behavior).
     public var selectorIsForStack: Bool {
-        guard let root = editingRootNode else { return false }
-        let path = selectedNodePath
-        if path.isRoot { return root.type == .stack }
-        return path.node(in: root)?.type == .stack
+        selectorTargetNode?.type == .stack
+    }
+
+    /// The node the selector is acting on, resolved from the path captured when
+    /// it opened. Nil if that pane no longer exists.
+    private var selectorTargetNode: LayoutNode? {
+        guard let root = editingRootNode else { return nil }
+        return appSelectorTargetPath.isRoot ? root : appSelectorTargetPath.node(in: root)
     }
 
     public var filteredApps: [RunningAppInfo] {
@@ -427,15 +540,23 @@ public class OverlayViewModel: ObservableObject {
     }
 
     public func showAppSelector() {
+        showAppSelector(for: selectedNodePath)
+    }
+
+    /// Open the selector against a specific pane.
+    ///
+    /// The path is captured up front rather than re-read from `selectedNodePath`
+    /// when the choice is made: `startEditing` resets that field to root, so any
+    /// refresh landing while the selector is open would silently retarget the
+    /// selection at the whole layout.
+    public func showAppSelector(for path: NodePath) {
         guard let root = editingRootNode else { return }
-        let path = selectedNodePath
         // Verify it points to a leaf
-        if !path.isRoot {
-            guard let node = path.node(in: root) else { return }
-            if node.type == .columns || node.type == .rows { return }
-        } else if root.type == .columns || root.type == .rows {
-            return
-        }
+        let node = path.isRoot ? root : path.node(in: root)
+        guard let node, node.type != .columns, node.type != .rows else { return }
+
+        appSelectorTargetPath = path
+        selectedNodePath = path
         refreshRunningApps()
         appSelectorMode = .app
         appSelectorSearchText = ""
@@ -470,37 +591,40 @@ public class OverlayViewModel: ObservableObject {
     }
 
     private func applyAppSelection(at index: Int) {
-        guard let root = editingRootNode,
-              let app = filteredApps[safe: index] else { return }
-        let currentNode = selectedNodePath.isRoot ? root : selectedNodePath.node(in: root)
-        guard let currentNode else { return }
-        let pinned = PinnedConfig(application: app.name, bundleId: app.bundleId)
-        let newNode = LayoutNode(type: .pinned, percentage: currentNode.percentage, pinned: pinned)
-        if selectedNodePath.isRoot {
-            commitEdit(newNode)
-        } else if let updated = root.replacingNode(at: selectedNodePath.indices, with: newNode) {
-            commitEdit(updated)
-        }
+        guard let app = filteredApps[safe: index] else { return }
+        pinToSelectorTarget(PinnedConfig(application: app.name, bundleId: app.bundleId))
     }
 
     private func applyWindowSelection(at index: Int) {
-        guard let root = editingRootNode,
-              let window = filteredWindows[safe: index] else { return }
-        let currentNode = selectedNodePath.isRoot ? root : selectedNodePath.node(in: root)
-        guard let currentNode else { return }
-        let pinned = PinnedConfig(
-            application: window.application,
-            bundleId: window.bundleId,
-            windowTitles: window.title.isEmpty ? nil : [window.title]
+        guard let window = filteredWindows[safe: index] else { return }
+
+        // Pin by app, not by window title. `LayoutManager.windowMatches` treats
+        // a recorded title as a substring the live title must still contain, and
+        // real titles carry volatile detail — a zoom level, a document name, an
+        // unread count. As soon as that drifts the pin stops matching and the
+        // window falls through to the stack instead of staying in its pane.
+        pinToSelectorTarget(
+            PinnedConfig(application: window.application, bundleId: window.bundleId)
         )
-        let newNode = LayoutNode(type: .pinned, percentage: currentNode.percentage, pinned: pinned)
-        if selectedNodePath.isRoot {
-            commitEdit(newNode)
-        } else if let updated = root.replacingNode(at: selectedNodePath.indices, with: newNode) {
-            commitEdit(updated)
-        }
         // Bring window to front (behind overlay)
         bringWindowToFront(window)
+    }
+
+    /// Replace the selector's target pane with a pinned node.
+    private func pinToSelectorTarget(_ pinned: PinnedConfig) {
+        guard let root = editingRootNode, let target = selectorTargetNode else { return }
+        let newNode = LayoutNode(type: .pinned, percentage: target.percentage, pinned: pinned)
+
+        if appSelectorTargetPath.isRoot {
+            // Only a leaf root may be replaced wholesale; a container root would
+            // mean discarding the entire layout.
+            guard root.type != .columns, root.type != .rows else { return }
+            commitEdit(newNode)
+        } else if let updated = root.replacingNode(
+            at: appSelectorTargetPath.indices, with: newNode
+        ) {
+            commitEdit(updated)
+        }
     }
 
     private func applyStackAppSelection(at index: Int) {
@@ -574,11 +698,25 @@ public class OverlayViewModel: ObservableObject {
     }
 
     public func addMonitorToScreenSet(_ displayName: String) {
-        guard var layout = editingLayout,
-              let updated = layout.addingDisplay(key: displayName, toScreenSetAt: selectedScreenSetIndex) else { return }
+        guard let layout = editingLayout,
+              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return }
+
+        // The layout has one stack across all its displays, so a new monitor
+        // starts empty — unless nothing holds the stack yet.
+        let defaultNode: LayoutNode = screenSet.containsStack ? .empty() : .stackAll()
+
+        guard let updated = layout.addingDisplay(
+            key: displayName,
+            defaultNode: defaultNode,
+            toScreenSetAt: selectedScreenSetIndex
+        ) else { return }
+
         syncEditingLayout(updated)
         selectedMonitorKey = displayName
         refreshEditingRootNode()
+        // Adding a display is a real change; it was previously left unsaved.
+        layoutManager.updateLayout(updated)
+        configManager.saveLayouts(layouts)
     }
 
     public func removeMonitorFromScreenSet(_ key: String) {

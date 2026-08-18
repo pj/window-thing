@@ -40,11 +40,11 @@ struct WindowThingApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
-    var overlayWindow: OverlayWindow?
+    let spaceOverlay = SpaceOverlayController()
     var quickMoveWindow: QuickMoveWindow?
     var onboardingWindow: OnboardingWindow?
-    /// Retained only in --screenshot settings mode; see showSettingsForScreenshot().
-    var screenshotSettingsWindow: NSWindow?
+    /// Retained so Preferences reopens the same window; see showSettings().
+    var settingsWindow: NSWindow?
     var hotKey: HotKey?
     var reloadConfigHotKey: HotKey?
     var openConfigHotKey: HotKey?
@@ -105,14 +105,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // showSettingsWindow: is a no-op unless the app is already active.
             NSApp.activate(ignoringOtherApps: true)
             switch scene {
-            case "overlay":
-                self.showOverlay()
+            // "overlay" is kept as an alias so existing capture scripts and
+            // saved shots keep lining up after the editor was folded in here.
+            case "space", "overlay":
                 // Nothing holds key focus in an automated session, and the
                 // overlay hides itself on resignKey — pin it open instead.
-                self.overlayWindow?.staysVisibleWhenInactive = true
+                self.spaceOverlay.staysVisibleWhenInactive = true
+                self.toggleSpaceOverlay()
             case "quickmove":   self.toggleQuickMove()
             case "onboarding":  self.showOnboarding()
-            case "settings":    self.showSettingsForScreenshot()
+            case "settings":    self.showSettings()
             default:            debugLog("Unknown screenshot scene: \(scene)")
             }
             NSApp.activate(ignoringOtherApps: true)
@@ -121,7 +123,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // it just arranged; float it back to the front for the capture.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 for window in NSApp.windows where window.isVisible {
-                    window.level = .floating
+                    // Never demote a window that deliberately sits higher
+                    // (the space overlay is at .screenSaver).
+                    window.level = max(window.level, .floating)
                     window.orderFrontRegardless()
                 }
             }
@@ -171,9 +175,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let editorItem = NSMenuItem(title: "Open Editor…", action: #selector(showOverlayFromMenu), keyEquivalent: "")
-        editorItem.target = self
-        menu.addItem(editorItem)
+        let spaceItem = NSMenuItem(title: "Show Layout", action: #selector(showSpaceFromMenu), keyEquivalent: "")
+        spaceItem.target = self
+        menu.addItem(spaceItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -198,17 +202,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             updateStatusMenu()
             statusItem?.button?.performClick(nil)
         } else {
-            // Left click → editor overlay
-            toggleOverlay()
+            // Left click → the activation surface
+            toggleSpaceOverlay()
         }
     }
 
-    @objc private func showOverlayFromMenu() {
-        showOverlay()
-    }
-
-    @objc private func showEditorFromMenu() {
-        toggleOverlay()
+    @objc private func showSpaceFromMenu() {
+        toggleSpaceOverlay()
     }
 
     @objc private func applyLayout(_ sender: NSMenuItem) {
@@ -217,12 +217,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openPreferences() {
-        NSApp.activate(ignoringOtherApps: true)
-        if #available(macOS 13.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+        showSettings()
     }
 
     private func openConfigFile() {
@@ -268,7 +263,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = HotKey(key: key, modifiers: modifiers)
         hotKey?.keyDownHandler = { [weak self] in
             debugLog(" Hotkey pressed!")
-            self?.toggleOverlay()
+            self?.toggleSpaceOverlay()
         }
         debugLog(" Hotkey registered: \(String(describing: hotKey))")
 
@@ -343,9 +338,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showCellPicker() {
-        // Show the overlay if hidden; the picker is triggered from inside the overlay
-        showOverlay()
-        overlayWindow?.showCellPickerForFocusedWindow()
+        // The picker lives inside the activation surface, so raise that first.
+        spaceOverlay.showCellPickerForFocusedWindow()
     }
 
     private func modifierFlags(from strings: [String]) -> NSEvent.ModifierFlags {
@@ -411,33 +405,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func toggleOverlay() {
-        debugLog(" toggleOverlay called")
-        if let window = overlayWindow, window.isVisible {
-            debugLog(" Hiding overlay")
-            hideOverlay()
-        } else {
-            debugLog(" Showing overlay")
-            showOverlay()
-        }
+    func toggleSpaceOverlay() {
+        spaceOverlay.toggle()
     }
 
-    func showOverlay() {
-        if overlayWindow == nil {
-            overlayWindow = OverlayWindow()
+    /// Hosts `SettingsView` in a plain window. SwiftUI's `Settings` scene is only
+    /// reachable through `showSettingsWindow:`, which silently does nothing for
+    /// an unbundled accessory binary — so we present the same view ourselves.
+    private func showSettings() {
+        if let existing = settingsWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            existing.makeKeyAndOrderFront(nil)
+            return
         }
 
-        overlayWindow?.showOverlay()
-    }
-
-    func hideOverlay() {
-        overlayWindow?.hideOverlay()
-    }
-
-    /// Hosts `SettingsView` in a plain window for screenshots. SwiftUI's
-    /// `Settings` scene is only reachable through `showSettingsWindow:`, which
-    /// does nothing for an unbundled accessory binary — the content is the same.
-    private func showSettingsForScreenshot() {
         let size = NSSize(width: 500, height: 400)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -449,8 +430,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: SettingsView())
         window.center()
+        settingsWindow = window
+
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        screenshotSettingsWindow = window
     }
 
     private func showOnboarding() {

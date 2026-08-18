@@ -15,12 +15,15 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$PROJECT_DIR/vm/screenshots"
 REMOTE_PROJ="~/Projects/window_thing"
 
-# Default scenes to capture
-SCENES=(overlay quickmove onboarding settings)
+# Default scenes to capture. The layout editor was folded into the activation
+# surface, so "space" is the whole editing UI now; "overlay" survives only as an
+# alias for it and isn't worth capturing twice.
+SCENES=(space quickmove onboarding settings)
 RESOLUTION="1920x1200"
 KEEP_VM=false
 SKIP_BUILD=false
 TEST_WINDOWS=3
+DUAL_DISPLAY=false
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -33,10 +36,13 @@ Usage: $0 [options]
 
 Options:
   --scene NAME        Capture only this scene (repeatable).
-                      One of: overlay, quickmove, onboarding, settings
+                      One of: space, quickmove, onboarding, settings
+                      ("overlay" is accepted as an alias for "space")
   --resolution WxH    VM display resolution (default: $RESOLUTION).
                       Applied with 'tart set' — requires the VM to be stopped.
   --windows N         Number of TextEdit test windows to open (default: $TEST_WINDOWS)
+  --dual-display      Add a virtual second display before capturing, so the
+                      per-screen overlays can be checked
   --skip-build        Reuse the existing build in the VM
   --keep              Leave the VM running afterwards
   --help              Show this help
@@ -51,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --scene)      SCENE_OVERRIDE+=("$2"); shift 2 ;;
         --resolution) RESOLUTION="$2";        shift 2 ;;
         --windows)    TEST_WINDOWS="$2";      shift 2 ;;
+        --dual-display) DUAL_DISPLAY=true;    shift ;;
         --skip-build) SKIP_BUILD=true;        shift ;;
         --keep)       KEEP_VM=true;           shift ;;
         --help|-h)    usage; exit 0 ;;
@@ -178,6 +185,30 @@ done" || log_warn "TCC grant failed — the overlay may render without live wind
 # Test windows — give the overlay something to show                             #
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# Virtual second display                                                        #
+# --------------------------------------------------------------------------- #
+# The activation surface puts one window on every screen, so a second display is
+# the only way to exercise that path.
+
+if [ "$DUAL_DISPLAY" = true ]; then
+    log_info "Adding a virtual second display (1920x1080)..."
+    sshpass -p "$SSH_PASS" scp "${SSH_OPTS[@]}" \
+        "$PROJECT_DIR/vm/scripts/create-virtual-display.swift" \
+        "${SSH_USER}@${VM_IP}:/tmp/create-virtual-display.swift" >/dev/null
+
+    # Persists until the helper exits, so leave it running in the background.
+    ssh_run "nohup swift /tmp/create-virtual-display.swift 1920 1080 60 \
+             </dev/null >/tmp/virtual-display.log 2>&1 &" || true
+    sleep 3   # let the WindowServer register it
+
+    displays=$(ssh_run \
+        "swift -e 'import CoreGraphics; var c = UInt32(0); CGGetActiveDisplayList(32, nil, &c); print(c)'" \
+        2>/dev/null || echo "?")
+    log_info "Active displays in VM: $displays"
+    [ "$displays" = "2" ] || log_warn "Expected 2 displays, got $displays — the second screen may not have registered"
+fi
+
 if [ "$TEST_WINDOWS" -gt 0 ]; then
     log_info "Opening $TEST_WINDOWS TextEdit test window(s)..."
     # One SSH round-trip for all of them; the loop lives in the remote shell.
@@ -207,21 +238,32 @@ capture_scene() {
     # Run screencapture directly rather than through sudo: sudo as the
     # responsible process triggers the macOS 15 screen-recording prompt.
     # Capture under $HOME so a stale root-owned /tmp file can't block the write.
-    local remote_shot="\$HOME/windowthing-shots/$scene.png"
-    if ! ssh_run "mkdir -p \$HOME/windowthing-shots && rm -f $remote_shot && \
-                  /usr/sbin/screencapture -x $remote_shot && test -s $remote_shot"; then
-        log_warn "screencapture failed for '$scene'"
-        return 1
-    fi
+    # -D<n> grabs one display at a time, so a dual-display run yields a shot per
+    # screen rather than a single composite.
+    local shots=("$scene")
+    [ "$DUAL_DISPLAY" = true ] && shots=("$scene-display1" "$scene-display2")
 
-    sshpass -p "$SSH_PASS" scp "${SSH_OPTS[@]}" \
-        "${SSH_USER}@${VM_IP}:windowthing-shots/$scene.png" "$OUT_DIR/$scene.png" >/dev/null
+    local index=1
+    for name in "${shots[@]}"; do
+        local remote_shot="\$HOME/windowthing-shots/$name.png"
+        local capture="/usr/sbin/screencapture -x"
+        [ "$DUAL_DISPLAY" = true ] && capture="$capture -D$index"
+
+        if ! ssh_run "mkdir -p \$HOME/windowthing-shots && rm -f $remote_shot && \
+                      $capture $remote_shot && test -s $remote_shot"; then
+            log_warn "screencapture failed for '$name'"
+            return 1
+        fi
+
+        sshpass -p "$SSH_PASS" scp "${SSH_OPTS[@]}" \
+            "${SSH_USER}@${VM_IP}:windowthing-shots/$name.png" "$OUT_DIR/$name.png" >/dev/null
+        log_info "  -> vm/screenshots/$name.png"
+        index=$((index + 1))
+    done
 
     # One app instance per scene — kill it so the next launch starts clean.
     ssh_run "pkill -f 'WindowThing --screenshot' || true" 2>/dev/null || true
     sleep 1
-
-    log_info "  -> vm/screenshots/$scene.png"
 }
 
 failed=0

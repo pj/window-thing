@@ -87,7 +87,8 @@ public enum LayoutCalculator {
         return calculateScreenSetPlacements(
             screenSet: screenSet,
             displays: displays,
-            windows: windows
+            windows: windows,
+            scope: layout.effectiveDisplayScope
         )
     }
 
@@ -95,75 +96,130 @@ public enum LayoutCalculator {
     public static func calculateScreenSetPlacements(
         screenSet: ScreenConfig,
         displays: [Display],
+        windows: [Window],
+        scope: DisplayScope = .shared
+    ) -> [WindowPlacement] {
+        switch scope {
+        case .shared:     return sharedPlacements(screenSet: screenSet, displays: displays, windows: windows)
+        case .perMonitor: return perMonitorPlacements(screenSet: screenSet, displays: displays, windows: windows)
+        }
+    }
+
+    /// The display a window is currently on, by its centre point. Falls back to
+    /// the main display for windows sitting off every screen.
+    public static func display(containing window: Window, in displays: [Display]) -> Display? {
+        let centre = CGPoint(
+            x: window.frame.x + window.frame.width / 2,
+            y: window.frame.y + window.frame.height / 2
+        )
+        return displays.first { $0.frame.cgRect.contains(centre) }
+            ?? displays.first { $0.isMain }
+            ?? displays.first
+    }
+
+    /// Resolve a screen set key to a display. `$PRIMARY` means the main display.
+    private static func display(forKey key: String, in displays: [Display]) -> Display? {
+        key == ScreenConfig.primaryKey
+            ? displays.first(where: { $0.isMain })
+            : displays.first(where: { $0.name == key })
+    }
+
+    /// Displays in processing order: secondaries first so their pinned panes
+    /// claim their windows before the stack sweeps up whatever is left.
+    private static func orderedEntries(
+        _ screenSet: ScreenConfig,
+        displays: [Display]
+    ) -> [(key: String, node: LayoutNode, display: Display)] {
+        screenSet.layouts
+            .compactMap { key, node in
+                display(forKey: key, in: displays).map { (key: key, node: node, display: $0) }
+            }
+            .sorted { !$0.display.isMain && $1.display.isMain }
+    }
+
+    // MARK: - Shared scope
+
+    /// One pool of windows across every display, and one stack for the layout.
+    private static func sharedPlacements(
+        screenSet: ScreenConfig,
+        displays: [Display],
         windows: [Window]
     ) -> [WindowPlacement] {
         var allPlacements: [WindowPlacement] = []
         var placedWindowIds: Set<UInt32> = []
-        var mainDisplayResult: LayoutReconcileResult?
-        var mainDisplay: Display?
-        var mainFrame: WindowFrame?
+        var stackFrame: WindowFrame?
+        var fallbackFrame: WindowFrame?
 
-        // Sort displays: non-main first, main last
-        // This ensures pinned windows on secondary monitors are processed first
-        let sortedEntries = screenSet.layouts.sorted { entry1, entry2 in
-            let isMain1 = entry1.key == ScreenConfig.primaryKey || displays.first(where: { $0.name == entry1.key })?.isMain == true
-            let isMain2 = entry2.key == ScreenConfig.primaryKey || displays.first(where: { $0.name == entry2.key })?.isMain == true
-            return !isMain1 && isMain2  // Non-main before main
-        }
-
-        for (displayKey, layoutNode) in sortedEntries {
-            let targetDisplay: Display?
-
-            if displayKey == ScreenConfig.primaryKey {
-                targetDisplay = displays.first(where: { $0.isMain })
-            } else {
-                targetDisplay = displays.first(where: { $0.name == displayKey })
-            }
-
-            guard let display = targetDisplay else {
-                continue
-            }
-
-            let isMainDisplay = display.isMain
-
-            // Phase 1: Reconcile the layout (find stack, place pinned windows)
+        for entry in orderedEntries(screenSet, displays: displays) {
             let result = reconcileLayout(
-                node: layoutNode,
-                frame: display.frame,
-                screenFrame: display.frame,
+                node: entry.node,
+                frame: entry.display.frame,
+                screenFrame: entry.display.frame,
                 windows: windows,
                 placedWindowIds: placedWindowIds
             )
 
-            if isMainDisplay {
-                // Save main display for phase 2
-                mainDisplayResult = result
-                mainDisplay = display
-                mainFrame = display.frame
+            // The layout has one stack; take it wherever it turns up. The main
+            // display wins a tie, since that is where it usually lives.
+            if let found = result.stackFrame, stackFrame == nil || entry.display.isMain {
+                stackFrame = found
             }
+            // With no stack anywhere, leftovers go fullscreen on the main display —
+            // but only when the layout actually covers it. A layout that describes
+            // just a secondary display has no opinion about the rest of the
+            // windows, so they are left where they are rather than being dragged
+            // onto a screen the layout never mentioned.
+            if entry.display.isMain { fallbackFrame = entry.display.frame }
 
-            // Add placements and track placed windows
             allPlacements.append(contentsOf: result.placements)
             placedWindowIds.formUnion(result.placedWindowIds)
         }
 
-        // Phase 2: Stack remaining windows on main display
-        if let stackFrame = mainDisplayResult?.stackFrame, let _ = mainDisplay {
-            let remainingWindows = windows.filter { !placedWindowIds.contains($0.id) }
-            for window in remainingWindows {
+        // Everything unclaimed lands in the one stack.
+        if let target = stackFrame ?? fallbackFrame {
+            for window in windows where !placedWindowIds.contains(window.id) {
                 allPlacements.append(WindowPlacement(
                     window: window,
-                    targetFrame: stackFrame,
+                    targetFrame: target,
                     placementType: .stacked
                 ))
             }
-        } else if let frame = mainFrame {
-            // No stack found - place remaining windows fullscreen on main display
-            let remainingWindows = windows.filter { !placedWindowIds.contains($0.id) }
-            for window in remainingWindows {
+        }
+
+        return allPlacements
+    }
+
+    // MARK: - Per-monitor scope
+
+    /// Each display is its own little layout: its panes only see windows already
+    /// on that display, and its leftovers stack there rather than migrating.
+    private static func perMonitorPlacements(
+        screenSet: ScreenConfig,
+        displays: [Display],
+        windows: [Window]
+    ) -> [WindowPlacement] {
+        var allPlacements: [WindowPlacement] = []
+
+        for entry in orderedEntries(screenSet, displays: displays) {
+            let mine = windows.filter {
+                display(containing: $0, in: displays)?.id == entry.display.id
+            }
+
+            let result = reconcileLayout(
+                node: entry.node,
+                frame: entry.display.frame,
+                screenFrame: entry.display.frame,
+                windows: mine,
+                placedWindowIds: []
+            )
+            allPlacements.append(contentsOf: result.placements)
+
+            // This display's own stack, or its full frame when it has none.
+            let target = result.stackFrame ?? entry.display.frame
+            for window in mine where !result.placedWindowIds.contains(window.id) {
                 allPlacements.append(WindowPlacement(
                     window: window,
-                    targetFrame: frame,
+                    targetFrame: target,
                     placementType: .stacked
                 ))
             }
@@ -194,9 +250,9 @@ public enum LayoutCalculator {
             guard let pinned = node.pinned else { break }
 
             // Find matching window that hasn't been placed
-            if let window = windows.first(where: {
-                !placedWindowIds.contains($0.id) && windowMatches($0, pinned: pinned)
-            }) {
+            if let window = bestMatchingWindow(
+                for: pinned, in: windows, excluding: placedWindowIds
+            ) {
                 result.placements.append(WindowPlacement(
                     window: window,
                     targetFrame: frame,
@@ -233,11 +289,11 @@ public enum LayoutCalculator {
             // Also place any specifically pinned windows in the stack
             if let stackWindows = node.windows {
                 for pinnedConfig in stackWindows {
-                    if let window = windows.first(where: {
-                        !placedWindowIds.contains($0.id) &&
-                        !result.placedWindowIds.contains($0.id) &&
-                        windowMatches($0, pinned: pinnedConfig)
-                    }) {
+                    if let window = bestMatchingWindow(
+                        for: pinnedConfig,
+                        in: windows,
+                        excluding: placedWindowIds.union(result.placedWindowIds)
+                    ) {
                         result.placements.append(WindowPlacement(
                             window: window,
                             targetFrame: frame,
@@ -331,9 +387,9 @@ public enum LayoutCalculator {
         // but are constrained to the screen bounds
         if let floats = node.floats {
             for pinnedConfig in floats {
-                if let window = windows.first(where: {
-                    !currentPlacedIds.contains($0.id) && windowMatches($0, pinned: pinnedConfig)
-                }) {
+                if let window = bestMatchingWindow(
+                    for: pinnedConfig, in: windows, excluding: currentPlacedIds
+                ) {
                     // Keep window's current position, but constrain to screen
                     var windowFrame = window.frame
                     windowFrame.x = max(screenFrame.x, min(windowFrame.x, screenFrame.x + screenFrame.width - windowFrame.width))
@@ -353,9 +409,9 @@ public enum LayoutCalculator {
         // Process zoomed windows - they go fullscreen on the screen
         if let zoomed = node.zoomed {
             for pinnedConfig in zoomed {
-                if let window = windows.first(where: {
-                    !currentPlacedIds.contains($0.id) && windowMatches($0, pinned: pinnedConfig)
-                }) {
+                if let window = bestMatchingWindow(
+                    for: pinnedConfig, in: windows, excluding: currentPlacedIds
+                ) {
                     result.placements.append(WindowPlacement(
                         window: window,
                         targetFrame: screenFrame,
@@ -385,6 +441,14 @@ public enum LayoutCalculator {
     // MARK: - Window Matching
 
     /// Check if a window matches a pinned config
+    /// Whether a window is a candidate for a pinned config.
+    ///
+    /// Window titles are deliberately *not* part of this test. A title carries
+    /// volatile detail — a zoom level, a document name, an unread count — so
+    /// treating it as a requirement means a pin silently stops matching and its
+    /// window falls through to the stack. Titles instead break ties, via
+    /// `windowMatchScore`, so a pinned pane degrades to "some window of this
+    /// app" rather than to nothing.
     public static func windowMatches(_ window: Window, pinned: PinnedConfig) -> Bool {
         // If bundleId is specified, it must match
         if let bundleId = pinned.bundleId {
@@ -400,13 +464,6 @@ public enum LayoutCalculator {
             }
         }
 
-        // If specific window titles are listed, at least one must match (partial)
-        if let titles = pinned.windowTitles, !titles.isEmpty {
-            if !titles.contains(where: { window.title.contains($0) }) {
-                return false
-            }
-        }
-
         // At least one criterion must be specified
         if pinned.bundleId == nil && pinned.application == nil {
             return false
@@ -415,9 +472,29 @@ public enum LayoutCalculator {
         return true
     }
 
+    /// Ranks a candidate: 2 when the pinned title still matches, 1 for an
+    /// app-level match, 0 for no match at all.
+    public static func windowMatchScore(_ window: Window, pinned: PinnedConfig) -> Int {
+        guard windowMatches(window, pinned: pinned) else { return 0 }
+        guard let titles = pinned.windowTitles, !titles.isEmpty else { return 1 }
+        return titles.contains(where: { window.title.contains($0) }) ? 2 : 1
+    }
+
+    /// The best candidate for a pinned config: the pinned window itself when it
+    /// is still recognisable, otherwise any window of the same app.
+    public static func bestMatchingWindow(
+        for pinned: PinnedConfig,
+        in windows: [Window],
+        excluding placed: Set<UInt32> = []
+    ) -> Window? {
+        windows
+            .filter { !placed.contains($0.id) && windowMatches($0, pinned: pinned) }
+            .max { windowMatchScore($0, pinned: pinned) < windowMatchScore($1, pinned: pinned) }
+    }
+
     /// Find a window matching the pinned config
     public static func findMatchingWindow(for pinned: PinnedConfig, in windows: [Window]) -> Window? {
-        return windows.first { windowMatches($0, pinned: pinned) }
+        bestMatchingWindow(for: pinned, in: windows)
     }
 
     // MARK: - Frame Calculation
@@ -550,7 +627,10 @@ public class LayoutManager: LayoutManaging {
     // MARK: - Layout Loading
 
     public func loadLayouts(from config: AppConfig) {
-        layouts = config.layouts
+        // Repair the one-stack-per-screen-set invariant on the way in. Older
+        // versions could write a second stack — notably when adding a display,
+        // which used to default the new monitor to a full stack.
+        layouts = config.layouts.map { $0.deduplicatingStacks() }
 
         // Restore lastUsedLayout from UserDefaults
         if let uuidString = defaults.string(forKey: "lastUsedLayoutId"),

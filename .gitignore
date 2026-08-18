@@ -5,7 +5,8 @@ DerivedData/
 
 # Swift Package Manager
 .swiftpm/
-Package.resolved
+# Package.resolved is tracked on purpose: release builds must pin dependency
+# versions, or two builds of the same tag can ship different code.
 
 # Xcode
 *.xcodeproj/
