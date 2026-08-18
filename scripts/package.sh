@@ -229,7 +229,7 @@ log "Verifying the archive unpacks to a valid signature"
 VERIFY_DIR="$(mktemp -d)"
 trap 'rm -rf "$VERIFY_DIR"' EXIT
 ( cd "$VERIFY_DIR" && unzip -q "$ZIP_PATH" )
-codesign --verify --strict --verbose=2 "$VERIFY_DIR/$APP_NAME.app"
+codesign --verify --deep --strict --verbose=2 "$VERIFY_DIR/$APP_NAME.app"
 spctl -a -vvv -t install "$VERIFY_DIR/$APP_NAME.app"
 
 echo

@@ -40,7 +40,9 @@ fetch_sparkle_tools() {
     rm -rf "$SPARKLE_TOOLS"
     mkdir -p "$SPARKLE_TOOLS"
     local tmp
-    tmp="$(mktemp -t sparkle).tar.xz"
+    # Full template rather than `mktemp -t sparkle`: the -t short form without
+    # X's is a BSD extension, and this machine has GNU coreutils.
+    tmp="$(mktemp "${TMPDIR:-/tmp}/sparkle.XXXXXX")"
     curl -fsSL -o "$tmp" \
         "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
     tar -xf "$tmp" -C "$SPARKLE_TOOLS" ./bin
@@ -71,7 +73,12 @@ BRANCH="$(git branch --show-current)"
 [ -n "$BRANCH" ] || fail "HEAD is detached — check out a branch first"
 
 if [ -n "$NEW_VERSION" ]; then
+    # package.sh reads ./VERSION, so the bump has to land on disk before
+    # building. A dry run puts it back on the way out — it is meant to leave the
+    # tree exactly as it found it.
+    ORIGINAL_VERSION="$(cat VERSION)"
     echo "$NEW_VERSION" > VERSION
+    restore_version() { printf '%s' "$ORIGINAL_VERSION" > VERSION; }
 fi
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -137,6 +144,10 @@ LENGTH="$(printf '%s' "$SIG_LINE" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
 log "Update signature: ${SIGNATURE:0:16}… (${LENGTH} bytes)"
 
 if [ "$DRY_RUN" = true ]; then
+    if declare -F restore_version >/dev/null; then
+        restore_version
+        log "Dry run — restored VERSION to $ORIGINAL_VERSION"
+    fi
     log "Dry run — stopping before any push. Artifact: $ZIP_PATH"
     exit 0
 fi
