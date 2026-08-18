@@ -26,8 +26,8 @@ jobs:
         run: |
           swift test \
             --filter WindowThingTests \
-            --skip "Integration Tests" \
-            --skip "Primary Display Layout Tests"
+            --skip "IntegrationTests" \
+            --skip "PrimaryDisplayLayoutTests"
           swift test --filter WindowThingViewModelTests
           swift test --filter WindowThingCanvasTests
 

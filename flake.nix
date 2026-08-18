@@ -16,36 +16,120 @@
         xcodeToolchain = "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin";
         swiftBin = "${xcodeToolchain}/swift";
         developerDir = "/Applications/Xcode.app/Contents/Developer";
-
-        # Common environment + SPM setup for derivations that invoke swift.
-        # Copies the already-resolved SPM checkout cache so the build can run
-        # offline (nix sandbox blocks network by default).
         xcodeSdk = "${developerDir}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
-
-        swiftSetup = ''
-          export HOME="$TMPDIR/home"
-          mkdir -p "$HOME"
-
-          # Override xcode-select so the Xcode toolchain is found correctly.
-          export DEVELOPER_DIR="${developerDir}"
-
-          # Point SPM / swiftc at the matching Xcode SDK, not the nix one.
-          export SDKROOT="${xcodeSdk}"
-
-          # Put the real toolchain bin first so xcrun resolves correctly.
-          export PATH="${xcodeToolchain}:$PATH"
-
-          # Reproduce the SPM directory layout so swift build finds checkouts.
-          mkdir -p .build
-          if [ -d "${self}/.build/checkouts" ]; then
-            cp -r "${self}/.build/checkouts" .build/checkouts
-          fi
-        '';
 
       in
       {
         # ------------------------------------------------------------------ #
-        #  Dev shell                                                           #
+        #  Default package — the released, notarized app                      #
+        # ------------------------------------------------------------------ #
+        #
+        # This deliberately installs a *prebuilt* app rather than compiling from
+        # source. WindowThing needs Accessibility and Screen Recording, and macOS
+        # keys those grants to the app's code signature. Nix can't sign inside its
+        # build sandbox, so a source build would be ad-hoc signed — and its
+        # identity would change on every rebuild, making the OS drop the
+        # permissions and forcing the user to re-approve after each update.
+        #
+        # The release asset is Developer ID signed, notarized and stapled, so its
+        # identity is stable across versions and the grants survive upgrades.
+        #
+        # `scripts/release.sh` rewrites the version and hash below, so keep them
+        # each on their own line as a simple `name = "value";` pair.
+        packages.default = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
+          pname = "window-thing";
+          version = "0.1.0";
+
+          src = pkgs.fetchurl {
+            url = "https://github.com/pj/window-thing/releases/download/v${finalAttrs.version}/WindowThing.zip";
+            hash = "sha256-0000000000000000000000000000000000000000000=";
+          };
+
+          nativeBuildInputs = [ pkgs.unzip ];
+
+          # The zip holds WindowThing.app at its root, not inside a directory.
+          sourceRoot = ".";
+
+          # Nothing here is ours to fix up. Stripping the binary or letting the
+          # darwin re-signing hook touch it would invalidate the Developer ID
+          # signature and the stapled notarization ticket.
+          dontFixup = true;
+
+          installPhase = ''
+            runHook preInstall
+
+            mkdir -p "$out/Applications"
+            cp -R WindowThing.app "$out/Applications/"
+
+            # Convenience entry point; the app is a menubar agent so this mainly
+            # exists for `--screenshot` and other CLI flags.
+            mkdir -p "$out/bin"
+            ln -s "$out/Applications/WindowThing.app/Contents/MacOS/WindowThing" \
+                  "$out/bin/window-thing"
+
+            runHook postInstall
+          '';
+
+          meta = {
+            description = "macOS menubar window manager with hotkey-driven layouts";
+            homepage = "https://github.com/pj/window-thing";
+            platforms = pkgs.lib.platforms.darwin;
+            mainProgram = "window-thing";
+            sourceProvenance = [ pkgs.lib.sourceTypes.binaryNativeCode ];
+          };
+        });
+
+        # ------------------------------------------------------------------ #
+        #  Source build — development only                                    #
+        # ------------------------------------------------------------------ #
+        #
+        # Impure: reaches into the host's Xcode and reuses the SPM checkout cache
+        # from the working tree so it can run without network access. Produces an
+        # ad-hoc signed binary, so it is NOT suitable for installing the app —
+        # see the note on packages.default. Use `scripts/package.sh` to produce a
+        # distributable build.
+        packages.from-source = pkgs.stdenvNoCC.mkDerivation {
+          name = "window-thing-from-source";
+          src = ./.;
+
+          __impureHostDeps = [
+            "/usr/bin/swift"
+            "/usr/bin/swiftc"
+            "/usr/bin/swift-package"
+            "/Applications/Xcode.app"
+            "/Library/Developer/CommandLineTools"
+            "/System/Library/Frameworks"
+            "/usr/lib/swift"
+          ];
+
+          buildPhase = ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            export DEVELOPER_DIR="${developerDir}"
+            export SDKROOT="${xcodeSdk}"
+            export PATH="${xcodeToolchain}:$PATH"
+
+            mkdir -p .build
+            if [ -d "${self}/.build/checkouts" ]; then
+              cp -r "${self}/.build/checkouts" .build/checkouts
+            fi
+
+            ${swiftBin} build -c release --disable-automatic-resolution 2>&1
+          '';
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp .build/release/WindowThing $out/bin/window-thing
+          '';
+
+          meta = {
+            description = "macOS window manager built from source (unsigned, development only)";
+            platforms = pkgs.lib.platforms.darwin;
+          };
+        };
+
+        # ------------------------------------------------------------------ #
+        #  Dev shell                                                          #
         # ------------------------------------------------------------------ #
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -64,96 +148,28 @@
             echo "WindowThing Development Environment"
             echo "Swift: $(${swiftBin} --version 2>/dev/null | head -1 || echo 'not found')"
             echo ""
-            echo "Build:  swift build"
-            echo "Test:   swift test"
-            echo "Lint:   swift-format lint --recursive Sources/ Tests/"
+            echo "Build:    swift build"
+            echo "Test:     swift test"
+            echo "Lint:     swift-format lint --recursive Sources/ Tests/"
+            echo "Package:  scripts/package.sh"
+            echo "Release:  scripts/release.sh"
           '';
         };
 
         # ------------------------------------------------------------------ #
-        #  Build                                                               #
+        #  Checks                                                             #
         # ------------------------------------------------------------------ #
-        packages.default = pkgs.stdenvNoCC.mkDerivation {
-          pname = "window-thing";
-          version = "0.1.0";
+        checks.format = pkgs.stdenvNoCC.mkDerivation {
+          name = "window-thing-format-check";
           src = ./.;
-
-          # Allow access to the Xcode toolchain and system frameworks.
-          __impureHostDeps = [
-            "/usr/bin/swift"
-            "/usr/bin/swiftc"
-            "/usr/bin/swift-package"
-            "/Applications/Xcode.app"
-            "/Library/Developer/CommandLineTools"
-            "/System/Library/Frameworks"
-            "/usr/lib/swift"
-          ];
-
+          nativeBuildInputs = [ pkgs.swift-format ];
           buildPhase = ''
-            ${swiftSetup}
-            ${swiftBin} build -c release \
-              --disable-automatic-resolution \
-              2>&1
+            swift-format lint --recursive Sources/ Tests/ 2>&1 | tee format-output.log
           '';
-
           installPhase = ''
-            mkdir -p $out/bin
-            cp .build/release/WindowThing $out/bin/window-thing
+            mkdir -p $out
+            cp format-output.log $out/
           '';
-
-          meta = {
-            description = "macOS window manager with hotkey-driven layouts";
-            platforms = pkgs.lib.platforms.darwin;
-          };
-        };
-
-        # ------------------------------------------------------------------ #
-        #  Checks (tests)                                                      #
-        # ------------------------------------------------------------------ #
-        checks = {
-          # Run the full test suite.
-          tests = pkgs.stdenvNoCC.mkDerivation {
-            name = "window-thing-tests";
-            src = ./.;
-
-            __impureHostDeps = [
-              "/usr/bin/swift"
-              "/usr/bin/swiftc"
-              "/usr/bin/swift-package"
-              "/Applications/Xcode.app"
-              "/Library/Developer/CommandLineTools"
-              "/System/Library/Frameworks"
-              "/usr/lib/swift"
-            ];
-
-            buildPhase = ''
-              ${swiftSetup}
-              ${swiftBin} test \
-                --disable-automatic-resolution \
-                2>&1 | tee test-output.log
-              # Propagate test failures
-              exit ''${PIPESTATUS[0]}
-            '';
-
-            installPhase = ''
-              mkdir -p $out
-              cp test-output.log $out/
-            '';
-          };
-
-          # Run swift-format in lint mode (no changes, just check).
-          format = pkgs.stdenvNoCC.mkDerivation {
-            name = "window-thing-format-check";
-            src = ./.;
-            nativeBuildInputs = [ pkgs.swift-format ];
-            buildPhase = ''
-              swift-format lint --recursive Sources/ Tests/ 2>&1 | tee format-output.log
-            '';
-            installPhase = ''
-              mkdir -p $out
-              cp format-output.log $out/
-            '';
-          };
         };
       }
     );

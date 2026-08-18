@@ -17,36 +17,51 @@ Inspired by the window management functionality from [modal-commander](https://g
 ## Requirements
 
 - macOS 13.0 (Ventura) or later
-- Accessibility permissions (required for window management)
+- Accessibility permission — required; the app cannot move windows without it
+- Screen Recording permission — optional, for live window thumbnails (falls back to app icons)
 
 ## Installation
 
-### Building from Source
+Releases are Developer ID signed, notarized and stapled, so they run on any Mac without a
+Gatekeeper prompt.
+
+### Download
+
+Grab `WindowThing.zip` from the [latest release](https://github.com/pj/window-thing/releases/latest),
+unzip it, and drag `WindowThing.app` to `/Applications`.
+
+### Nix flake
+
+```nix
+{
+  inputs.window_thing.url = "github:pj/window-thing?ref=v0.1.0";
+}
+```
+
+Then add it to your packages:
+
+```nix
+window_thing.packages.${pkgs.stdenv.hostPlatform.system}.default
+```
+
+This installs the prebuilt, signed app — not a source build. That matters: macOS keys the
+Accessibility grant to the code signature, so an unsigned build would lose its permission on
+every upgrade. See [RELEASE.md](RELEASE.md) for the details.
+
+### Building from source
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/window-thing.git
+git clone https://github.com/pj/window-thing.git
 cd window-thing
 
-# Build with Swift
+nix develop            # or ensure Xcode is installed
 swift build -c release
 
-# Create app bundle
-./scripts/build.sh
-
-# Copy to Applications
-cp -R .build/WindowThing.app /Applications/
+scripts/package.sh --no-sign     # → build/WindowThing.app
 ```
 
-### Using Nix Flakes
-
-```bash
-# Enter development shell
-nix develop
-
-# Build
-swift build -c release
-```
+A source build is fine for development, but it is ad-hoc signed, so macOS will make you
+re-grant Accessibility after every rebuild.
 
 ## Usage
 

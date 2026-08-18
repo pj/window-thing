@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template for WindowThing.app/Contents/Info.plist.
+
+  CFBundleShortVersionString and CFBundleVersion are placeholders — scripts/package.sh
+  stamps the real values in with plutil. Everything else is authored here.
+
+  CFBundleIdentifier must never change: macOS keys the Accessibility and Screen
+  Recording grants to it, so a new identifier silently drops every user's
+  permissions and they have to re-approve the app.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>WindowThing</string>
+    <key>CFBundleDisplayName</key>
+    <string>WindowThing</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.windowthing.app</string>
+    <key>CFBundleExecutable</key>
+    <string>WindowThing</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <!-- Menubar-only: no Dock icon, no main menu. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © Paul Johnson. All rights reserved.</string>
+</dict>
+</plist>
