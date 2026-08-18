@@ -42,7 +42,7 @@
 
           src = pkgs.fetchurl {
             url = "https://github.com/pj/window-thing/releases/download/v${finalAttrs.version}/WindowThing.zip";
-            hash = "sha256-0000000000000000000000000000000000000000000=";
+            hash = "sha256-Ke0JHGabAp8o6UB48+RwDTG1nBckpN8UrVKvUTJhNzc=";
           };
 
           nativeBuildInputs = [ pkgs.unzip ];
