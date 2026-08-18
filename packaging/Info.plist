@@ -39,5 +39,31 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © Paul Johnson. All rights reserved.</string>
+
+    <!--
+      Sparkle auto-update (see RELEASE.md "Auto-update"). The feed is the
+      appcast.xml committed at the repo root, served unauthenticated over
+      raw.githubusercontent.com — which works because the repo is public.
+
+      SUPublicEDKey is the EdDSA public half of a keypair whose private half
+      lives only in the build machine's login keychain. Anyone can read the
+      appcast and the release zips, but only that machine can produce an update
+      Sparkle will accept: it refuses any enclosure whose signature does not
+      verify against this key.
+
+      SUAllowsAutomaticUpdates is false, so a background check still surfaces
+      Sparkle's normal "Install Update" prompt rather than swapping the app out
+      from under the user.
+    -->
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/pj/window-thing/main/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>UKJq6MtkqySGAl4mrqYpAdIdI2ZsrZI3/DPXGJT6N9s=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
 </dict>
 </plist>

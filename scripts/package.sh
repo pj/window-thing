@@ -117,6 +117,20 @@ for bundle in "$PROJECT_DIR"/.build/release/*.bundle; do
 done
 shopt -u nullglob
 
+# Sparkle arrives as an XCFramework that SwiftPM links against but does not
+# embed — executables get no embed step. Copy the macOS slice in ourselves; the
+# -rpath in Package.swift is what lets the binary find it here at runtime.
+SPARKLE_FW="$(find "$PROJECT_DIR/.build/artifacts" \
+    -type d -path '*/Sparkle.xcframework/macos-*/Sparkle.framework' \
+    -print -quit 2>/dev/null || true)"
+
+[ -n "$SPARKLE_FW" ] || fail "Sparkle.framework not found under .build/artifacts — run 'swift build' first"
+
+log "Embedding $(basename "$(dirname "$SPARKLE_FW")")/Sparkle.framework"
+mkdir -p "$APP_DIR/Contents/Frameworks"
+# -R preserves the framework's version symlinks, which codesign requires.
+cp -R "$SPARKLE_FW" "$APP_DIR/Contents/Frameworks/"
+
 # ---- sign ----------------------------------------------------------------
 
 ZIP_PATH="$BUILD_DIR/$APP_NAME.zip"
@@ -140,16 +154,43 @@ fi
 # --options runtime  → hardened runtime, required for notarization
 # --timestamp        → secure timestamp, also required for notarization
 #
-# Everything links statically, so there are no nested frameworks or dylibs to
-# sign first and no need for --deep.
+# Our own code links statically, so the only nested code is Sparkle. Signing has
+# to run inside-out — helpers, then the framework, then the app — because
+# signing an enclosing bundle seals whatever its contents are at that moment.
+# Sparkle ships signed by the Sparkle project, and notarization rejects that
+# ("not signed with a valid Developer ID certificate", "signature does not
+# include a secure timestamp"), so every nested binary gets re-signed here.
+#
+# Re-signing the framework with our own identity is also what keeps the hardened
+# runtime's library validation happy: it requires embedded code to share the
+# app's team identifier, so no disable-library-validation entitlement is needed.
 log "Signing with \"$CODESIGN_IDENTITY\""
+
+SPARKLE_IN_APP="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+if [ -d "$SPARKLE_IN_APP" ]; then
+    for nested in \
+        "$SPARKLE_IN_APP/Versions/B/XPCServices/Downloader.xpc" \
+        "$SPARKLE_IN_APP/Versions/B/XPCServices/Installer.xpc" \
+        "$SPARKLE_IN_APP/Versions/B/Autoupdate" \
+        "$SPARKLE_IN_APP/Versions/B/Updater.app" \
+        "$SPARKLE_IN_APP"
+    do
+        [ -e "$nested" ] || continue
+        log "  signing $(basename "$nested")"
+        codesign --force --options runtime --timestamp \
+                 --sign "$CODESIGN_IDENTITY" "$nested"
+    done
+fi
+
 codesign --force \
          --options runtime \
          --timestamp \
          --sign "$CODESIGN_IDENTITY" \
          "$APP_DIR"
 
-codesign --verify --strict --verbose=2 "$APP_DIR"
+# --deep on *verification* (never on signing) so the nested Sparkle helpers are
+# checked too, rather than only the app's outer seal.
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 rm -f "$ZIP_PATH"
 ditto -c -k --keepParent --norsrc --noextattr "$APP_DIR" "$ZIP_PATH"

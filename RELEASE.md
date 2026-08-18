@@ -87,6 +87,49 @@ so the `flake.nix` at that tag has to already describe its own release.
 
 `--dry-run` stops after packaging, before anything is pushed.
 
+## Auto-update
+
+WindowThing checks GitHub Releases for updates via [Sparkle](https://sparkle-project.org).
+There is a "Check for Updates…" item in the menubar menu, and a background check once a day
+(`SUScheduledCheckInterval`). `SUAllowsAutomaticUpdates` is false, so an available update still
+surfaces Sparkle's normal "Install Update" prompt rather than swapping the app out silently.
+
+**Where it does and doesn't apply.** Sparkle updates by replacing the `.app` on disk, which only
+works where that bundle is writable. A nix-installed copy lives in `/nix/store`, which is
+read-only and root-owned, so an update attempt could only fail. `UpdateChannel` in
+`WindowThingCore` resolves this at launch from the bundle path: a normal install gets the updater,
+a nix install gets a disabled "Updates managed by nix" item, and a bare `swift run` binary gets
+"Updates unavailable in development builds". Update nix installs by bumping the flake input.
+
+**How it's wired:**
+
+- `SUFeedURL` points at `appcast.xml` at the repo root, served over `raw.githubusercontent.com`.
+  That works because the repo is public; a private repo would need different hosting.
+- `SUPublicEDKey` is the EdDSA public half of a signing keypair whose private half lives only in
+  this machine's login keychain. Anyone can read the appcast and the zips, but only this machine
+  can produce an update Sparkle accepts — it refuses any enclosure whose signature doesn't verify.
+  This is the **same key SiteBlocker uses**: Sparkle's own guidance is that one signing key covers
+  every app you embed it in, and `generate_keys` reuses the existing keychain entry rather than
+  creating a second.
+- Sparkle ships as an XCFramework that SwiftPM links but does not embed, so `package.sh` copies it
+  into `Contents/Frameworks` and `Package.swift` adds the `@executable_path/../Frameworks` rpath.
+- Sparkle's nested helpers (`Downloader.xpc`, `Installer.xpc`, `Autoupdate`, `Updater.app`) arrive
+  signed by the Sparkle project. Notarization rejects that, so `package.sh` re-signs them
+  inside-out with our Developer ID before sealing the app. Re-signing them with our own identity
+  is also what satisfies the hardened runtime's library validation, so no
+  `disable-library-validation` entitlement is needed.
+
+`release.sh` signs the zip with `sign_update` and appends an `<item>` to `appcast.xml` **before**
+tagging, so one commit carries the version, the flake pin and the appcast entry. The download URL
+is deterministic from the tag, so the entry can be written before the release exists. The build
+number in the entry is read back out of the built bundle rather than recomputed, since committing
+changes the commit count and Sparkle compares `CFBundleVersion`.
+
+If another machine ever needs to publish, it needs its own Developer ID cert and notarization
+credentials **and** the Sparkle private key exported from this one
+(`generate_keys -x <path>` to export, `-f <path>` to import). Don't generate a second keypair, or
+`SUPublicEDKey` in already-shipped builds won't match.
+
 ## Bumping a version
 
 `scripts/release.sh 0.2.0` writes `./VERSION` for you. Everything else — the bundle version, the

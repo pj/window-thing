@@ -30,6 +30,10 @@ Gatekeeper prompt.
 Grab `WindowThing.zip` from the [latest release](https://github.com/pj/window-thing/releases/latest),
 unzip it, and drag `WindowThing.app` to `/Applications`.
 
+It keeps itself up to date from there: there's a **Check for Updates…** item in the menubar menu,
+and it checks once a day in the background. Updates are cryptographically signed, and installing
+one always asks first.
+
 ### Nix flake
 
 ```nix
@@ -47,6 +51,10 @@ window_thing.packages.${pkgs.stdenv.hostPlatform.system}.default
 This installs the prebuilt, signed app — not a source build. That matters: macOS keys the
 Accessibility grant to the code signature, so an unsigned build would lose its permission on
 every upgrade. See [RELEASE.md](RELEASE.md) for the details.
+
+Nix installs update by bumping the flake input, not through the in-app updater — `/nix/store` is
+read-only, so the app detects this and shows "Updates managed by nix" instead of an update check
+that could only fail.
 
 ### Building from source
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import HotKey
 import os.log
+import Sparkle
 import WindowThingCore
 import WindowThingViewModel
 
@@ -55,6 +56,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let windowManager = WindowManager.shared
     let configManager = ConfigManager.shared
     let layoutManager = LayoutManager.shared
+
+    /// Resolved so a symlinked or aliased copy (nix-darwin puts one in
+    /// /Applications, home-manager in ~/Applications) reports where it really
+    /// lives rather than where it is linked from.
+    let updateChannel = UpdateChannelResolver.channel(
+        forBundlePath: Bundle.main.bundleURL.resolvingSymlinksInPath().path
+    )
+
+    /// Started only when the install is one Sparkle can actually replace; see
+    /// UpdateChannel. `startingUpdater: true` kicks off the scheduled background
+    /// checks as well as providing the menu action.
+    private lazy var updaterController: SPUStandardUpdaterController? = {
+        guard updateChannel.supportsInAppUpdates else { return nil }
+        return SPUStandardUpdaterController(
+            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         debugLog("App launched")
@@ -185,6 +202,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let prefsItem = NSMenuItem(title: "Preferences...", action: #selector(openPreferences), keyEquivalent: ",")
         prefsItem.target = self
         menu.addItem(prefsItem)
+
+        // Updates. Where Sparkle can't replace the bundle (a nix install, or a
+        // bare development binary) the item says who owns updates instead of
+        // offering a check that could only fail.
+        if let updaterController {
+            let updateItem = NSMenuItem(
+                title: "Check for Updates…",
+                action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+                keyEquivalent: ""
+            )
+            updateItem.target = updaterController
+            menu.addItem(updateItem)
+        } else if let reason = updateChannel.unavailableReason {
+            let updateItem = NSMenuItem(title: reason, action: nil, keyEquivalent: "")
+            updateItem.isEnabled = false
+            menu.addItem(updateItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 

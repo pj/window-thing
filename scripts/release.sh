@@ -29,6 +29,25 @@ cd "$PROJECT_DIR"
 log()  { echo "==> $*"; }
 fail() { echo "error: $*" >&2; exit 1; }
 
+# Sparkle's CLI tools (sign_update), cached in build/ across runs.
+SPARKLE_VERSION="2.9.6"
+SPARKLE_TOOLS="$PROJECT_DIR/build/sparkle-tools"
+
+fetch_sparkle_tools() {
+    [ -x "$SPARKLE_TOOLS/bin/sign_update" ] && return 0
+
+    log "Fetching Sparkle $SPARKLE_VERSION CLI tools"
+    rm -rf "$SPARKLE_TOOLS"
+    mkdir -p "$SPARKLE_TOOLS"
+    local tmp
+    tmp="$(mktemp -t sparkle).tar.xz"
+    curl -fsSL -o "$tmp" \
+        "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+    tar -xf "$tmp" -C "$SPARKLE_TOOLS" ./bin
+    rm -f "$tmp"
+    xattr -dr com.apple.quarantine "$SPARKLE_TOOLS/bin" 2>/dev/null || true
+}
+
 DRY_RUN=false
 NEW_VERSION=""
 
@@ -94,10 +113,44 @@ ZIP_PATH="$PROJECT_DIR/build/$APP_NAME.zip"
 SRI="sha256-$(shasum -a 256 "$ZIP_PATH" | cut -d' ' -f1 | xxd -r -p | base64)"
 log "Asset hash: $SRI"
 
+# ---- sign the update for Sparkle -----------------------------------------
+
+# The download URL is deterministic from the tag, so the appcast entry can be
+# written before the release exists. That lets the flake pin and the appcast
+# entry land in the same commit as the tag, rather than trailing behind it.
+ASSET_URL="https://github.com/$REPO/releases/download/$TAG/$APP_NAME.zip"
+
+# Read the build number back out of the bundle rather than recomputing it: the
+# commit count changes when this script commits, and Sparkle compares
+# CFBundleVersion, so a mismatch would make the release invisible to installed
+# copies.
+BUILD_NUMBER="$(plutil -extract CFBundleVersion raw "$PROJECT_DIR/build/$APP_NAME.app/Contents/Info.plist")"
+
+fetch_sparkle_tools
+SIG_LINE="$("$SPARKLE_TOOLS/bin/sign_update" "$ZIP_PATH")"
+# sign_update prints: sparkle:edSignature="..." length="..."
+SIGNATURE="$(printf '%s' "$SIG_LINE" | sed -n 's/.*edSignature="\([^"]*\)".*/\1/p')"
+LENGTH="$(printf '%s' "$SIG_LINE" | sed -n 's/.*length="\([^"]*\)".*/\1/p')"
+
+[ -n "$SIGNATURE" ] || fail "sign_update produced no signature (is the EdDSA private key in this keychain?)"
+
+log "Update signature: ${SIGNATURE:0:16}… (${LENGTH} bytes)"
+
 if [ "$DRY_RUN" = true ]; then
     log "Dry run — stopping before any push. Artifact: $ZIP_PATH"
     exit 0
 fi
+
+# ---- record the release in the appcast -----------------------------------
+
+log "Appending to appcast.xml"
+python3 "$SCRIPT_DIR/append_appcast_item.py" \
+    --appcast "$PROJECT_DIR/appcast.xml" \
+    --version "$BUILD_NUMBER" \
+    --short-version "$VERSION" \
+    --url "$ASSET_URL" \
+    --length "$LENGTH" \
+    --signature "$SIGNATURE"
 
 # ---- pin the release in flake.nix ----------------------------------------
 
@@ -118,7 +171,7 @@ if n_v != 1 or n_h != 1:
 path.write_text(text)
 PY
 
-git add flake.nix VERSION
+git add flake.nix VERSION appcast.xml
 git commit -m "Release $TAG"
 
 # ---- tag and push --------------------------------------------------------
