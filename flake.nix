@@ -58,6 +58,14 @@
           installPhase = ''
             runHook preInstall
 
+            # unzip materialises any AppleDouble entries in the archive as stray
+            # `._*` files. They are not part of the signature's seal, so leaving
+            # them turns a valid signature into "a sealed resource is missing or
+            # invalid" and Gatekeeper rejects the app. Releases built by
+            # scripts/package.sh no longer contain them, but older assets do.
+            find . -name '._*' -delete
+            rm -rf __MACOSX
+
             mkdir -p "$out/Applications"
             cp -R WindowThing.app "$out/Applications/"
 

@@ -124,11 +124,19 @@ ZIP_PATH="$BUILD_DIR/$APP_NAME.zip"
 if [ "$SIGN" = false ]; then
     log "Skipping signing (--no-sign)"
     rm -f "$ZIP_PATH"
-    ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+    ditto -c -k --keepParent --norsrc --noextattr "$APP_DIR" "$ZIP_PATH"
     log "Done (unsigned): $APP_DIR"
     exit 0
 fi
 
+# A note on the ditto flags used below: --norsrc --noextattr keep the bundle's
+# extended attributes out of the archive. Without them ditto stores them as
+# AppleDouble entries, and `unzip` — which is what the nix installer uses —
+# materialises those as stray `._*` files. Those files are not in the
+# signature's seal, so codesign reports "a sealed resource is missing or
+# invalid" and Gatekeeper rejects the app. The only xattr on the bundle is
+# com.apple.provenance, which nothing needs.
+#
 # --options runtime  → hardened runtime, required for notarization
 # --timestamp        → secure timestamp, also required for notarization
 #
@@ -144,7 +152,7 @@ codesign --force \
 codesign --verify --strict --verbose=2 "$APP_DIR"
 
 rm -f "$ZIP_PATH"
-ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+ditto -c -k --keepParent --norsrc --noextattr "$APP_DIR" "$ZIP_PATH"
 
 if [ "$NOTARIZE" = false ]; then
     log "Skipping notarization (--no-notarize)"
@@ -165,13 +173,23 @@ log "Stapling ticket"
 xcrun stapler staple "$APP_DIR"
 
 rm -f "$ZIP_PATH"
-ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+ditto -c -k --keepParent --norsrc --noextattr "$APP_DIR" "$ZIP_PATH"
 
 # ---- verify --------------------------------------------------------------
 
 log "Verifying"
 xcrun stapler validate "$APP_DIR"
 spctl -a -vvv -t install "$APP_DIR"
+
+# Verify the *archive* too, not just the bundle on disk. The two can disagree —
+# a zip carrying AppleDouble entries unpacks into something whose signature no
+# longer verifies, which is exactly how a broken v0.1.0 got shipped.
+log "Verifying the archive unpacks to a valid signature"
+VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+( cd "$VERIFY_DIR" && unzip -q "$ZIP_PATH" )
+codesign --verify --strict --verbose=2 "$VERIFY_DIR/$APP_NAME.app"
+spctl -a -vvv -t install "$VERIFY_DIR/$APP_NAME.app"
 
 echo
 log "Done: $ZIP_PATH"
