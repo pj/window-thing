@@ -10,7 +10,20 @@ public class MockWindowManager: WindowManaging {
     public var focusedApplication: Application?
 
     // Track calls for verification
-    public var setWindowFrameCalls: [(pid: pid_t, windowTitle: String?, frame: WindowFrame)] = []
+    /// Frame writes now arrive from several threads at once — the real manager
+    /// applies one process per worker — so recording them needs a lock.
+    private let callLock = NSLock()
+    public var setWindowFrameCalls: [(pid: pid_t, windowTitle: String?, frame: WindowFrame)] {
+        get { callLock.lock(); defer { callLock.unlock() }; return _setWindowFrameCalls }
+        set { callLock.lock(); defer { callLock.unlock() }; _setWindowFrameCalls = newValue }
+    }
+    private var _setWindowFrameCalls: [(pid: pid_t, windowTitle: String?, frame: WindowFrame)] = []
+
+    private func record(_ call: (pid: pid_t, windowTitle: String?, frame: WindowFrame)) {
+        callLock.lock()
+        _setWindowFrameCalls.append(call)
+        callLock.unlock()
+    }
     public var setWindowFrameReturnValue: Bool = true
 
     public init() {}
@@ -24,12 +37,12 @@ public class MockWindowManager: WindowManaging {
     }
 
     public func setWindowFrame(pid: pid_t, windowTitle: String?, frame: WindowFrame) -> Bool {
-        setWindowFrameCalls.append((pid: pid, windowTitle: windowTitle, frame: frame))
+        record((pid: pid, windowTitle: windowTitle, frame: frame))
         return setWindowFrameReturnValue
     }
 
     public func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool {
-        setWindowFrameCalls.append((pid: pid, windowTitle: nil, frame: frame))
+        record((pid: pid, windowTitle: nil, frame: frame))
         return setWindowFrameReturnValue
     }
 

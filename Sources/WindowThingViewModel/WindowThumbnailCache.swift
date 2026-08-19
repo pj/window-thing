@@ -40,6 +40,13 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     /// Current cache snapshot. Key = CGWindowID (the AX window's on-screen ID).
     public private(set) var thumbnails: [CGWindowID: CGImage] = [:]
 
+    /// The same images wrapped for AppKit, built once per capture rather than
+    /// per lookup. `nsImage(for:)` is called from view bodies — once per window
+    /// tile, and every chooser pane lists every window — so building them there
+    /// meant dozens of allocations on each pass of the render loop, including
+    /// while dragging or switching layouts.
+    private var nsImages: [CGWindowID: NSImage] = [:]
+
     /// Called on the main queue after each successful refresh.
     public var onUpdate: (() -> Void)?
 
@@ -156,7 +163,7 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             // granted. Unlike the old preflight check this also asks the system
             // for access, so a first run can still surface the prompt. The loop
             // keeps running, so granting permission recovers without a restart.
-            await publish(state: .degraded, thumbnails: [:])
+            await publish(state: .degraded, thumbnails: [:], nsImages: [:])
             return
         }
 
@@ -184,7 +191,12 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             }
         }
 
-        await publish(state: .polling, thumbnails: captured)
+        // Wrapping happens here, on the capture task, not on whatever thread
+        // happens to be drawing.
+        let wrapped = captured.mapValues {
+            NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+        }
+        await publish(state: .polling, thumbnails: captured, nsImages: wrapped)
     }
 
     @available(macOS 14.0, *)
@@ -205,11 +217,16 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             contentFilter: filter, configuration: config)
     }
 
-    private func publish(state newState: State, thumbnails newThumbnails: [CGWindowID: CGImage]) async {
+    private func publish(
+        state newState: State,
+        thumbnails newThumbnails: [CGWindowID: CGImage],
+        nsImages newImages: [CGWindowID: NSImage]
+    ) async {
         await MainActor.run {
             let changed = self.state != newState
             self.state = newState
             self.thumbnails = newThumbnails
+            self.nsImages = newImages
             if changed { self.onStateChange?(newState) }
             self.onUpdate?()
         }
@@ -220,8 +237,9 @@ public final class WindowThumbnailCache: @unchecked Sendable {
 
 extension WindowThumbnailCache {
     /// Return a thumbnail as NSImage, or nil if not cached.
+    ///
+    /// A dictionary lookup: the wrapping was done when the image was captured.
     public func nsImage(for windowID: CGWindowID) -> NSImage? {
-        guard let cgImage = thumbnails[windowID] else { return nil }
-        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        nsImages[windowID]
     }
 }

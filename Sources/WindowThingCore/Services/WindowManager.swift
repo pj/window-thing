@@ -20,6 +20,17 @@ public class WindowManager: WindowManaging {
     private var displayCache: [Display] = []
     private var pollTimer: Timer?
 
+    /// Guards the two caches. They are written from the main thread by
+    /// `getWindows`/`getDisplays` and read from the layout-apply workers, which
+    /// run several processes' frame writes at once.
+    private let cacheLock = NSLock()
+
+    private func cachedWindow(id: CGWindowID) -> Window? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return windowCache.first { $0.id == id }
+    }
+
     private init() {}
 
     // MARK: - Display Management
@@ -78,7 +89,9 @@ public class WindowManager: WindowManaging {
             ))
         }
 
+        cacheLock.lock()
         displayCache = displays
+        cacheLock.unlock()
         DisplayRegistry.shared.record(displays: displays)
         return displays
     }
@@ -155,7 +168,9 @@ public class WindowManager: WindowManaging {
             ))
         }
 
+        cacheLock.lock()
         windowCache = windows
+        cacheLock.unlock()
         return windows
     }
 
@@ -178,7 +193,7 @@ public class WindowManager: WindowManaging {
 
     public func setWindowFrame(windowId: CGWindowID, frame: WindowFrame) -> Bool {
         // Find the window's application
-        guard let window = windowCache.first(where: { $0.id == windowId }) else {
+        guard let window = cachedWindow(id: windowId) else {
             return false
         }
 
@@ -233,7 +248,7 @@ public class WindowManager: WindowManaging {
         }
 
         // Fallback: match by title from cache
-        if let cached = windowCache.first(where: { $0.id == windowId }) {
+        if let cached = cachedWindow(id: windowId) {
             return setWindowFrame(pid: pid, windowTitle: cached.title, frame: frame)
         }
 

@@ -662,14 +662,25 @@ public class LayoutManager: LayoutManaging {
     }
 
     public func applyLayout(_ layout: Layout) {
+        let tEntry = CFAbsoluteTimeGetCurrent()
         let displays = windowManager.getDisplays()
+        let tDisp = CFAbsoluteTimeGetCurrent()
         let windows = windowManager.getWindows()
+        let tWin = CFAbsoluteTimeGetCurrent()
 
         let placements = LayoutCalculator.calculatePlacements(
             layout: layout,
             displays: displays,
             windows: windows
         )
+        let tCalc = CFAbsoluteTimeGetCurrent()
+        defer {
+            let d = String(format: "%.1f", (tDisp - tEntry) * 1000)
+            let w = String(format: "%.1f", (tWin - tDisp) * 1000)
+            let c = String(format: "%.1f", (tCalc - tWin) * 1000)
+            let total = String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - tEntry) * 1000)
+            WindowManager.perfLog.info("applyLayout main-thread: displays \(d, privacy: .public)ms, windows \(w, privacy: .public)ms, calc \(c, privacy: .public)ms, total \(total, privacy: .public)ms")
+        }
 
         // Update state immediately on calling thread
         currentLayout = layout
@@ -715,28 +726,50 @@ public class LayoutManager: LayoutManaging {
             // reached under some earlier one.
             if !skippingUnchanged { tracker.reset() }
 
-            for placement in placements {
-                guard !item.isCancelled else { return }
-
-                if skippingUnchanged {
-                    // Ask every pass, including for windows that look correct:
-                    // arriving is what clears a window's record.
-                    guard tracker.shouldMove(
-                        windowID: placement.window.id,
-                        current: placement.window.frame,
-                        target: placement.targetFrame
-                    ) else { continue }
+            // Decide what to move first, on one thread: the tracker is shared
+            // mutable state and this is cheap, unlike the writes below.
+            let toMove: [WindowPlacement]
+            if skippingUnchanged {
+                // Ask about every window, including those that look correct:
+                // arriving is what clears a window's record.
+                toMove = placements.filter {
+                    tracker.shouldMove(
+                        windowID: $0.window.id,
+                        current: $0.window.frame,
+                        target: $0.targetFrame
+                    )
                 }
-
-                _ = wm.setWindowFrame(
-                    pid: placement.window.pid,
-                    windowId: placement.window.id,
-                    frame: placement.targetFrame
-                )
-                moved += 1
+            } else {
+                toMove = placements
             }
-
+            moved = toMove.count
             tracker.prune(keeping: Set(placements.map(\.window.id)))
+
+            guard !item.isCancelled, !toMove.isEmpty else { return }
+
+            // Grouped by process so each app's windows are written together,
+            // which lets the AX element cache resolve that app's window list
+            // once instead of once per window.
+            //
+            // Deliberately sequential. Running processes in parallel was tried
+            // and measured over repeated layout switches: it improved the median
+            // but not the worst case, and both were dominated by how quickly
+            // individual apps happened to answer rather than by scheduling. It
+            // is not worth requiring every WindowManaging implementation to be
+            // thread-safe for that.
+            let byProcess = Dictionary(grouping: toMove, by: { $0.window.pid })
+
+            for (_, group) in byProcess {
+                guard !item.isCancelled else { return }
+                for placement in group {
+                    guard !item.isCancelled else { return }
+                    _ = wm.setWindowFrame(
+                        pid: placement.window.pid,
+                        windowId: placement.window.id,
+                        frame: placement.targetFrame
+                    )
+                }
+            }
         }
         currentApplyWorkItem = item
         applyQueue.async(execute: item)
