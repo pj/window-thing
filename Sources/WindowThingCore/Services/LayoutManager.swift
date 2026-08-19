@@ -658,9 +658,6 @@ public class LayoutManager: LayoutManaging {
     }
 
     public func applyLayout(_ layout: Layout) {
-        // Cancel any in-progress layout application
-        currentApplyWorkItem?.cancel()
-
         let displays = windowManager.getDisplays()
         let windows = windowManager.getWindows()
 
@@ -675,17 +672,51 @@ public class LayoutManager: LayoutManaging {
         lastUsedLayout = layout
         defaults.set(layout.id.uuidString, forKey: "lastUsedLayoutId")
 
-        // Apply window frames on background queue (cancellable)
+        applyPlacements(placements, skippingUnchanged: false)
+    }
+
+    /// Push placements out to real windows.
+    ///
+    /// Always off the main thread: each frame is several Accessibility round
+    /// trips into another process, and doing that inline froze the UI for the
+    /// duration. Serialised on one queue so passes can't interleave, and
+    /// cancellable so a newer layout supersedes one still being applied rather
+    /// than fighting it.
+    ///
+    /// - Parameter skippingUnchanged: skip windows already at their target.
+    ///   Right for the reconcile timer, where almost nothing has moved. Wrong
+    ///   for an explicit apply, which should assert the layout even over a
+    ///   window that merely looks correct.
+    private func applyPlacements(_ placements: [WindowPlacement], skippingUnchanged: Bool) {
+        currentApplyWorkItem?.cancel()
+
         let wm = windowManager
         var item: DispatchWorkItem!
         item = DispatchWorkItem {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            var moved = 0
+
+            wm.beginFrameBatch()
+            defer {
+                wm.endFrameBatch()
+                // Debug level: useful when chasing a layout that won't settle,
+                // invisible otherwise.
+                let ms = String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                WindowManager.perfLog.debug("applied \(moved, privacy: .public)/\(placements.count, privacy: .public) frames in \(ms, privacy: .public)ms")
+            }
+
             for placement in placements {
                 guard !item.isCancelled else { return }
+                if skippingUnchanged,
+                   !placement.window.frame.needsMove(to: placement.targetFrame) {
+                    continue
+                }
                 _ = wm.setWindowFrame(
                     pid: placement.window.pid,
                     windowId: placement.window.id,
                     frame: placement.targetFrame
                 )
+                moved += 1
             }
         }
         currentApplyWorkItem = item
@@ -725,6 +756,7 @@ public class LayoutManager: LayoutManaging {
     /// This is called when windows/monitors change to maintain the layout
     public func reconcileCurrentLayout() {
         guard let layout = currentLayout else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
 
         let displays = windowManager.getDisplays()
         let windows = windowManager.getWindows()
@@ -735,14 +767,11 @@ public class LayoutManager: LayoutManaging {
             windows: windows
         )
 
-        // Apply all placements
-        for placement in placements {
-            _ = windowManager.setWindowFrame(
-                pid: placement.window.pid,
-                windowId: placement.window.id,
-                frame: placement.targetFrame
-            )
-        }
+        // Only move what actually needs moving. This runs on a timer, so in the
+        // steady state nearly every window is already where the layout wants it,
+        // and re-asserting those frames cost several Accessibility round trips
+        // per window, twice a second, to change nothing.
+        applyPlacements(placements, skippingUnchanged: true)
     }
 
     // MARK: - Saved Setups

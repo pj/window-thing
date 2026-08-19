@@ -395,7 +395,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Set up callback for automatic layout reconciliation + thumbnail refresh
         windowManager.onCacheRefresh = { [weak self] in
-            self?.layoutManager.reconcileCurrentLayout()
+            guard let self else { return }
+
+            // Not while the layout surface is open. It is an editor, and this
+            // fires twice a second on the main thread: it would push every
+            // half-dragged intermediate state out to real windows, and the AX
+            // round trip to move them all stalls the drag it is reacting to,
+            // which is what made resizing a pane move in visible steps.
+            //
+            // Saving applies the finished layout, so nothing is lost by waiting.
+            if !self.spaceOverlay.isVisible {
+                self.layoutManager.reconcileCurrentLayout()
+            }
+
             WindowThumbnailCache.shared.start()  // no-op if already polling
         }
 

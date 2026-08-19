@@ -2,6 +2,7 @@ import Foundation
 import CoreGraphics
 import AppKit
 import ApplicationServices
+import os.log
 
 // Private AX API to get a window's CGWindowID from its AXUIElement
 @_silgen_name("_AXUIElementGetWindow")
@@ -9,6 +10,11 @@ func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePoin
 
 public class WindowManager: WindowManaging {
     public static let shared = WindowManager()
+
+    static let perfLog = Logger(subsystem: "com.windowthing", category: "perf")
+
+    /// Above this, a poll tick is stealing enough of the main thread to be felt.
+    static let slowPollThresholdMs: Double = 20
 
     private var windowCache: [Window] = []
     private var displayCache: [Display] = []
@@ -55,8 +61,17 @@ public class WindowManager: WindowManaging {
             displays.append(Display(
                 id: index,
                 name: name,
+                // visibleFrame, not frame: the menu bar and Dock are not ours to
+                // place windows under. macOS clamps any window that tries, so
+                // targets derived from the full frame can never be reached — the
+                // reconcile timer would see every window as misplaced and rewrite
+                // it, several Accessibility round trips each, twice a second,
+                // forever, without ever winning.
+                //
+                // The flip axis stays the *full* height of the primary screen,
+                // since that is where the global coordinate origin is.
                 frame: Self.globalFrame(
-                    forScreenFrame: screen.frame,
+                    forScreenFrame: screen.visibleFrame,
                     primaryHeight: primaryHeight
                 ),
                 isMain: isMain
@@ -209,22 +224,12 @@ public class WindowManager: WindowManaging {
     }
 
     public func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool {
-        let appElement = AXUIElementCreateApplication(pid)
-
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success,
-              let windows = windowsRef as? [AXUIElement] else {
-            return false
-        }
-
-        // Match by CGWindowID
-        for window in windows {
-            var wid: CGWindowID = 0
-            if _AXUIElementGetWindow(window, &wid) == .success, wid == windowId {
-                return applyFrame(frame, to: window)
-            }
+        // Resolving a window id to its AX element costs one round trip to list
+        // the app's windows plus one per window to read its id. Applying a
+        // layout calls this once per window, so without memoising, an app with
+        // ten placed windows gets its whole window list walked ten times.
+        if let element = axWindowElement(pid: pid, windowId: windowId) {
+            return applyFrame(frame, to: element)
         }
 
         // Fallback: match by title from cache
@@ -233,6 +238,74 @@ public class WindowManager: WindowManaging {
         }
 
         return false
+    }
+
+    /// AX elements for a process's windows, keyed by CGWindowID.
+    ///
+    /// Valid only for the duration of one reconcile pass — windows open and
+    /// close — so `beginFrameBatch()`/`endFrameBatch()` bracket its lifetime and
+    /// it stays empty outside one.
+    private var axElementCache: [pid_t: [CGWindowID: AXUIElement]] = [:]
+    private var batchDepth = 0
+
+    /// Guards the two above. Batches run on the layout-apply queue, but frames
+    /// are also set directly from the main thread (moving a window to a cell,
+    /// restoring a setup), so both can be touched at once.
+    private let batchLock = NSLock()
+
+    /// Memoise AX window lookups until the matching `endFrameBatch()`.
+    ///
+    /// Callers that set many frames at once should bracket the run; a single
+    /// `setWindowFrame` outside a batch resolves directly and caches nothing, so
+    /// it can't act on a stale element.
+    public func beginFrameBatch() {
+        batchLock.lock()
+        batchDepth += 1
+        batchLock.unlock()
+    }
+
+    public func endFrameBatch() {
+        batchLock.lock()
+        batchDepth = max(0, batchDepth - 1)
+        if batchDepth == 0 { axElementCache.removeAll() }
+        batchLock.unlock()
+    }
+
+    private func axWindowElement(pid: pid_t, windowId: CGWindowID) -> AXUIElement? {
+        batchLock.lock()
+        let batching = batchDepth > 0
+        let cached = batching ? axElementCache[pid] : nil
+        batchLock.unlock()
+
+        if let cached { return cached[windowId] }
+
+        // The AX round trips stay outside the lock — they reach into another
+        // process and can block, and holding a lock across that would serialise
+        // every caller behind the slowest app.
+        let appElement = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        var byId: [CGWindowID: AXUIElement] = [:]
+
+        if AXUIElementCopyAttributeValue(
+            appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+           let windows = windowsRef as? [AXUIElement] {
+            for window in windows {
+                var wid: CGWindowID = 0
+                if _AXUIElementGetWindow(window, &wid) == .success {
+                    byId[wid] = window
+                }
+            }
+        }
+
+        if batching {
+            batchLock.lock()
+            // Only if a batch is still open — one may have ended while the AX
+            // calls above were in flight, and caching then would outlive it.
+            if batchDepth > 0 { axElementCache[pid] = byId }
+            batchLock.unlock()
+        }
+
+        return byId[windowId]
     }
 
     private func applyFrame(_ frame: WindowFrame, to window: AXUIElement) -> Bool {
@@ -341,8 +414,18 @@ public class WindowManager: WindowManaging {
     public func startPolling() {
         let interval = TimeInterval(ConfigManager.shared.config.pollIntervalMs) / 1000.0
         pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            let t0 = CFAbsoluteTimeGetCurrent()
             self?.refreshCache()
             self?.onCacheRefresh?()
+
+            // Silent while healthy. This runs twice a second on the main
+            // thread, so anything slow here is felt directly as dropped frames
+            // — worth saying so rather than logging every tick into the noise.
+            let elapsedMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            if elapsedMs > WindowManager.slowPollThresholdMs {
+                let ms = String(format: "%.1f", elapsedMs)
+                WindowManager.perfLog.warning("slow poll tick: \(ms, privacy: .public)ms on the main thread")
+            }
         }
     }
 

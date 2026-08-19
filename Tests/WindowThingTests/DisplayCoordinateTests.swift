@@ -71,3 +71,34 @@ struct DisplayCoordinateTests {
         #expect(left.width == 1920)
     }
 }
+
+/// The usable area of a screen, and why the layout must use it.
+@Suite("Visible frame")
+struct VisibleFrameTests {
+
+    @Test("A display's frame excludes the menu bar")
+    func menuBarIsExcluded() {
+        // A 3456x2234 primary screen with a 33pt menu bar: visibleFrame sits
+        // 33pt lower in Cocoa terms, which is y=33 once flipped into the global
+        // space windows actually live in.
+        let visible = CGRect(x: 0, y: 0, width: 3456, height: 2201)
+        let frame = WindowManager.globalFrame(forScreenFrame: visible, primaryHeight: 2234)
+
+        #expect(frame.y == 33)
+        #expect(frame.height == 2201)
+    }
+
+    @Test("Targets built from the visible frame are reachable")
+    func targetsAreReachable() {
+        // Regression: using the full frame put every target 33pt above where
+        // macOS will let a window sit, so reconciliation rewrote every window on
+        // every tick and never converged.
+        let visible = CGRect(x: 0, y: 0, width: 3456, height: 2201)
+        let target = WindowManager.globalFrame(forScreenFrame: visible, primaryHeight: 2234)
+
+        // What the window server actually grants: clamped below the menu bar.
+        let achievable = WindowFrame(x: 0, y: 33, width: 3456, height: 2201)
+
+        #expect(!achievable.needsMove(to: target))
+    }
+}

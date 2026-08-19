@@ -8,6 +8,12 @@ public protocol WindowManaging {
     func getWindows() -> [Window]
     func setWindowFrame(pid: pid_t, windowTitle: String?, frame: WindowFrame) -> Bool
     func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool
+
+    /// Bracket a run of `setWindowFrame` calls so window lookups can be
+    /// memoised for its duration. Optional: the default pair does nothing, and
+    /// correctness never depends on them being called.
+    func beginFrameBatch()
+    func endFrameBatch()
     func getFocusedApplication() -> Application?
 }
 
@@ -38,4 +44,10 @@ public protocol LayoutManaging {
     func loadSetup(_ setup: SavedSetup)
     func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws
     func cellAddresses(for layout: Layout, displays: [Display]) -> [IndexedCell]
+}
+
+
+public extension WindowManaging {
+    func beginFrameBatch() {}
+    func endFrameBatch() {}
 }

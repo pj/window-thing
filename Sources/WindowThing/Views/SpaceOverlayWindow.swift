@@ -374,6 +374,10 @@ private struct DividerSlot: Identifiable {
     let aPct: Double
     let bPct: Double
     let containerLength: CGFloat
+    /// Sum of *every* sibling's percentage in this container, which is what
+    /// `containerLength` spans. Percentages need not add to 100 — flattenTree
+    /// normalises by this sum — so converting points to percent needs it.
+    let siblingsPctSum: Double
 
     var id: String { "\(parentPath.indices.map(String.init).joined(separator: "."))#\(index)" }
 }
@@ -391,10 +395,14 @@ private func flattenTree(
     tiles: inout [TileSlot],
     dividers: inout [DividerSlot]
 ) {
+    func pctSum(_ children: [LayoutNode]) -> Double {
+        let defaultP = children.isEmpty ? 100.0 : 100.0 / Double(children.count)
+        return max(children.reduce(0.0) { $0 + ($1.percentage ?? defaultP) }, 0.001)
+    }
+
     func childLengths(_ children: [LayoutNode], total: CGFloat) -> [CGFloat] {
         let defaultP = children.isEmpty ? 100.0 : 100.0 / Double(children.count)
-        let sum = max(children.reduce(0.0) { $0 + ($1.percentage ?? defaultP) }, 0.001)
-        return children.map { CGFloat(($0.percentage ?? defaultP) / sum) * total }
+        return children.map { CGFloat(($0.percentage ?? defaultP) / pctSum(children)) * total }
     }
 
     switch node.type {
@@ -415,7 +423,8 @@ private func flattenTree(
                                  width: dividerThickness, height: rect.height),
                     aPct: cols[i].percentage ?? defaultP,
                     bPct: cols[i + 1].percentage ?? defaultP,
-                    containerLength: rect.width
+                    containerLength: rect.width,
+                    siblingsPctSum: pctSum(cols)
                 ))
             }
         }
@@ -438,7 +447,8 @@ private func flattenTree(
                                  width: rect.width, height: dividerThickness),
                     aPct: rs[i].percentage ?? defaultP,
                     bPct: rs[i + 1].percentage ?? defaultP,
-                    containerLength: rect.height
+                    containerLength: rect.height,
+                    siblingsPctSum: pctSum(rs)
                 ))
             }
         }
@@ -629,7 +639,18 @@ struct SpaceOverlayView: View {
             }
         }
         .ignoresSafeArea()
+        // A drag gesture reports translation in whatever coordinate space it is
+        // given, and the default is the dragged view's own. A divider handle is
+        // `.position`-ed from the layout it is resizing, so it moves as you drag
+        // it — measuring the drag against the handle's own frame means measuring
+        // it against something the drag is currently moving, which oscillates.
+        // The dividers read their translation in this space instead, which is
+        // pinned to the canvas and stays put.
+        .coordinateSpace(name: Self.canvasSpace)
     }
+
+    /// Fixed reference frame for divider drags. See `.coordinateSpace` above.
+    fileprivate static let canvasSpace = "windowthing.layout-canvas"
 
     /// How far the floating chrome reaches into a pane. Only panes touching the
     /// top of the screen are affected; everything lower gets nothing.
@@ -1226,6 +1247,7 @@ private struct DividerHandle: View {
     @State private var hovering = false
     @State private var startA: Double = 0
     @State private var startB: Double = 0
+    @State private var startSum: Double = 100
     @State private var lastA: Double = 0
     @State private var lastB: Double = 0
 
@@ -1252,23 +1274,28 @@ private struct DividerHandle: View {
                 }
             }
             .gesture(
-                DragGesture(minimumDistance: 2)
+                DragGesture(minimumDistance: 2, coordinateSpace: .named(SpaceOverlayView.canvasSpace))
                     .onChanged { value in
                         if !dragging {
                             dragging = true
                             (isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
                             startA = divider.aPct
                             startB = divider.bPct
+                            startSum = divider.siblingsPctSum
                             lastA = startA
                             lastB = startB
                             onDragStarted()
                         }
                         let travel = isVertical ? value.translation.width : value.translation.height
-                        let total = startA + startB
-                        let deltaPct = Double(travel / max(divider.containerLength, 1)) * total
-                        let newA = min(max(5, startA + deltaPct), total - 5)
-                        lastA = newA
-                        lastB = total - newA
+                        let resolved = DividerResize.resolve(
+                            travel: travel,
+                            containerLength: divider.containerLength,
+                            startA: startA,
+                            startB: startB,
+                            siblingsPctSum: startSum
+                        )
+                        lastA = resolved.a
+                        lastB = resolved.b
                         onChanging(lastA, lastB)
                     }
                     .onEnded { _ in
