@@ -47,6 +47,16 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     /// while dragging or switching layouts.
     private var nsImages: [CGWindowID: NSImage] = [:]
 
+    /// Full-resolution copies, captured only for windows currently drawn large
+    /// enough that the thumbnail cap would show. A chooser tile is a couple of
+    /// hundred points wide and never needs one; a pane-filling preview does.
+    private var fullImages: [CGWindowID: NSImage] = [:]
+
+    /// Which windows want a full-resolution capture. Written from view
+    /// lifecycle on the main thread, read from the capture task.
+    private var fullResRequests: Set<CGWindowID> = []
+    private let requestLock = NSLock()
+
     /// Called on the main queue after each successful refresh.
     public var onUpdate: (() -> Void)?
 
@@ -125,6 +135,39 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         startPolling(interval: captureInterval)
     }
 
+    /// Ask for this window to also be captured at its native size, for as long
+    /// as something is drawing it large. Reference-counted by caller pairs of
+    /// request/release, so two panes showing the same window both have to let go.
+    public func requestFullResolution(for windowID: CGWindowID) {
+        requestLock.lock()
+        fullResRequests.insert(windowID)
+        requestLock.unlock()
+    }
+
+    public func releaseFullResolution(for windowID: CGWindowID) {
+        requestLock.lock()
+        fullResRequests.remove(windowID)
+        requestLock.unlock()
+    }
+
+    /// How many windows currently want a native-size capture. Internal so tests
+    /// can check the request bookkeeping without a capture session.
+    var fullResolutionRequestCount: Int { currentFullResRequests().count }
+
+    /// Taking the lock in a synchronous method: NSLock cannot be used directly
+    /// from an async context, and the capture task needs this snapshot.
+    private func currentFullResRequests() -> Set<CGWindowID> {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+        return fullResRequests
+    }
+
+    /// The native-size image for a window, if one was requested and captured.
+    /// Callers fall back to the ordinary thumbnail until the next capture lands.
+    public func fullImage(for windowID: CGWindowID) -> NSImage? {
+        fullImages[windowID]
+    }
+
     static func clamp(_ interval: TimeInterval) -> TimeInterval {
         max(2.0, min(5.0, interval))
     }
@@ -168,7 +211,7 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             // granted. Unlike the old preflight check this also asks the system
             // for access, so a first run can still surface the prompt. The loop
             // keeps running, so granting permission recovers without a restart.
-            await publish(state: .degraded, thumbnails: [:], nsImages: [:])
+            await publish(state: .degraded, thumbnails: [:], nsImages: [:], fullImages: [:])
             return
         }
 
@@ -201,11 +244,26 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         let wrapped = captured.mapValues {
             NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
         }
-        await publish(state: .polling, thumbnails: captured, nsImages: wrapped)
+
+        let wanted = currentFullResRequests()
+
+        // Only ever a few — one per pane drawing a window large — so these are
+        // captured unscaled without reintroducing the cost the cap removed.
+        var full: [CGWindowID: NSImage] = [:]
+        for window in targets where wanted.contains(window.windowID) {
+            if let image = await Self.screenshot(of: window, maxEdge: nil) {
+                full[window.windowID] = NSImage(
+                    cgImage: image, size: NSSize(width: image.width, height: image.height))
+            }
+        }
+
+        await publish(state: .polling, thumbnails: captured, nsImages: wrapped, fullImages: full)
     }
 
     @available(macOS 14.0, *)
-    private static func screenshot(of window: SCWindow) async -> CGImage? {
+    private static func screenshot(
+        of window: SCWindow, maxEdge: CGFloat? = maxThumbnailEdge
+    ) async -> CGImage? {
         let filter = SCContentFilter(desktopIndependentWindow: window)
 
         let config = SCStreamConfiguration()
@@ -219,7 +277,10 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         // Scaling once here, on the capture task, costs nothing extra: the
         // compositor is doing it either way.
         let longestEdge = max(window.frame.width, window.frame.height)
-        let scale = longestEdge > Self.maxThumbnailEdge ? Self.maxThumbnailEdge / longestEdge : 1
+        let scale: CGFloat = {
+            guard let maxEdge, longestEdge > maxEdge else { return 1 }
+            return maxEdge / longestEdge
+        }()
         config.width = max(1, Int(window.frame.width * scale))
         config.height = max(1, Int(window.frame.height * scale))
         config.showsCursor = false
@@ -232,13 +293,15 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     private func publish(
         state newState: State,
         thumbnails newThumbnails: [CGWindowID: CGImage],
-        nsImages newImages: [CGWindowID: NSImage]
+        nsImages newImages: [CGWindowID: NSImage],
+        fullImages newFullImages: [CGWindowID: NSImage]
     ) async {
         await MainActor.run {
             let changed = self.state != newState
             self.state = newState
             self.thumbnails = newThumbnails
             self.nsImages = newImages
+            self.fullImages = newFullImages
             if changed { self.onStateChange?(newState) }
             self.onUpdate?()
         }

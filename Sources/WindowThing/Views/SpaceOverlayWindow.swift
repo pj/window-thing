@@ -1860,6 +1860,17 @@ private struct WindowTile: View {
                 )
                 .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
         }
+        // Only a tile drawing a window large needs the native-size capture, and
+        // only while it is on screen. Tied to the tile's own lifetime rather
+        // than to the app label, which a filling tile may not show at all.
+        .onAppear {
+            guard fills else { return }
+            WindowThumbnailCache.shared.requestFullResolution(for: window.id)
+        }
+        .onDisappear {
+            guard fills else { return }
+            WindowThumbnailCache.shared.releaseFullResolution(for: window.id)
+        }
     }
 
     /// Names the app above its preview — screenshots of a blank document or a
@@ -1883,7 +1894,14 @@ private struct WindowTile: View {
     }
 
     private var thumbnail: NSImage? {
-        WindowThumbnailCache.shared.nsImage(for: window.id)
+        // A pane-filling preview is drawn far larger than the capped thumbnail,
+        // where the downscaling would read as blur. Those windows are captured
+        // at native size as well; fall back to the thumbnail until the next
+        // capture lands, so the tile is never empty while waiting.
+        if fills, let full = WindowThumbnailCache.shared.fullImage(for: window.id) {
+            return full
+        }
+        return WindowThumbnailCache.shared.nsImage(for: window.id)
     }
 
     @ViewBuilder

@@ -113,3 +113,57 @@ struct WindowThumbnailCacheTests {
         cache.stop()
     }
 }
+
+/// Thumbnails are capped in size so a paneful of them is cheap to draw, but a
+/// pane-filling preview is drawn far larger and would show the downscaling. Those
+/// few windows are captured at native size as well.
+@Suite("Full-resolution requests")
+struct WindowThumbnailFullResolutionTests {
+
+    @Test("A window is only captured at native size while something asks")
+    func requestsAreTracked() {
+        let cache = WindowThumbnailCache()
+        #expect(cache.fullResolutionRequestCount == 0)
+
+        cache.requestFullResolution(for: 1)
+        #expect(cache.fullResolutionRequestCount == 1)
+
+        cache.releaseFullResolution(for: 1)
+        #expect(cache.fullResolutionRequestCount == 0)
+    }
+
+    @Test("Requesting the same window twice does not double-count")
+    func requestsAreASet() {
+        // Two panes can draw the same window large; releasing once should not
+        // leave a phantom request behind.
+        let cache = WindowThumbnailCache()
+
+        cache.requestFullResolution(for: 7)
+        cache.requestFullResolution(for: 7)
+        #expect(cache.fullResolutionRequestCount == 1)
+
+        cache.releaseFullResolution(for: 7)
+        #expect(cache.fullResolutionRequestCount == 0)
+    }
+
+    @Test("Windows are requested independently")
+    func requestsArePerWindow() {
+        let cache = WindowThumbnailCache()
+
+        cache.requestFullResolution(for: 1)
+        cache.requestFullResolution(for: 2)
+        cache.releaseFullResolution(for: 1)
+
+        #expect(cache.fullResolutionRequestCount == 1)
+    }
+
+    @Test("No native-size image until a capture has produced one")
+    func noImageBeforeCapture() {
+        let cache = WindowThumbnailCache()
+        cache.requestFullResolution(for: 1)
+
+        // Callers fall back to the ordinary thumbnail meanwhile, so a tile is
+        // never blank while waiting for the next capture.
+        #expect(cache.fullImage(for: 1) == nil)
+    }
+}
