@@ -614,6 +614,10 @@ public class LayoutManager: LayoutManaging {
     let applyQueue = DispatchQueue(label: "com.windowthing.layout-apply", qos: .userInitiated)
     private var currentApplyWorkItem: DispatchWorkItem?
 
+    /// What each window can actually achieve. Only ever touched from
+    /// `applyQueue`, inside the work item below.
+    private let settleTracker = WindowSettleTracker()
+
     /// Block until any pending layout application completes. For testing only.
     public func waitForPendingApply() {
         applyQueue.sync {}
@@ -691,6 +695,7 @@ public class LayoutManager: LayoutManaging {
         currentApplyWorkItem?.cancel()
 
         let wm = windowManager
+        let tracker = settleTracker
         var item: DispatchWorkItem!
         item = DispatchWorkItem {
             let t0 = CFAbsoluteTimeGetCurrent()
@@ -702,15 +707,27 @@ public class LayoutManager: LayoutManaging {
                 // Debug level: useful when chasing a layout that won't settle,
                 // invisible otherwise.
                 let ms = String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - t0) * 1000)
-                WindowManager.perfLog.debug("applied \(moved, privacy: .public)/\(placements.count, privacy: .public) frames in \(ms, privacy: .public)ms")
+                WindowManager.perfLog.debug("applied \(moved, privacy: .public)/\(placements.count, privacy: .public) frames in \(ms, privacy: .public)ms, \(tracker.settledCount, privacy: .public) settled short of target")
             }
+
+            // An explicit apply is the user asking for this layout, so every
+            // window gets a clean slate rather than inheriting a conclusion
+            // reached under some earlier one.
+            if !skippingUnchanged { tracker.reset() }
 
             for placement in placements {
                 guard !item.isCancelled else { return }
-                if skippingUnchanged,
-                   !placement.window.frame.needsMove(to: placement.targetFrame) {
-                    continue
+
+                if skippingUnchanged {
+                    // Ask every pass, including for windows that look correct:
+                    // arriving is what clears a window's record.
+                    guard tracker.shouldMove(
+                        windowID: placement.window.id,
+                        current: placement.window.frame,
+                        target: placement.targetFrame
+                    ) else { continue }
                 }
+
                 _ = wm.setWindowFrame(
                     pid: placement.window.pid,
                     windowId: placement.window.id,
@@ -718,6 +735,8 @@ public class LayoutManager: LayoutManaging {
                 )
                 moved += 1
             }
+
+            tracker.prune(keeping: Set(placements.map(\.window.id)))
         }
         currentApplyWorkItem = item
         applyQueue.async(execute: item)
