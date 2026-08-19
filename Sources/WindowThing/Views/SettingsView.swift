@@ -62,9 +62,9 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("Accessibility") {
+            Section("Permissions") {
                 HStack {
-                    Text("Accessibility Permission")
+                    Text("Accessibility")
                     Spacer()
                     if AXIsProcessTrusted() {
                         Text("Granted")
@@ -76,10 +76,45 @@ struct GeneralSettingsView: View {
                         }
                     }
                 }
+                Text("Required. WindowThing cannot move windows without it.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack {
+                    Text("Screen Recording")
+                    Spacer()
+                    if CGPreflightScreenCaptureAccess() {
+                        Text("Granted")
+                            .foregroundColor(.green)
+                    } else {
+                        Button("Open Settings…", action: openScreenRecordingSettings)
+                    }
+                }
+                Text("Optional, for live window previews. Without it WindowThing shows app icons instead.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// Send the user to the Screen Recording pane.
+    ///
+    /// macOS shows the screen-recording prompt at most **once per app, ever**.
+    /// After that first request, `CGRequestScreenCaptureAccess()` returns
+    /// immediately without showing anything, so an app that only ever calls it
+    /// leaves the user with no way back if that one prompt was missed or
+    /// dismissed. Requesting first still covers the never-asked case; opening
+    /// the pane covers every case after it.
+    private func openScreenRecordingSettings() {
+        if !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+        }
+        if let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Render the configured hotkey rather than a literal — the two drifted
