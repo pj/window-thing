@@ -52,9 +52,16 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     /// hundred points wide and never needs one; a pane-filling preview does.
     private var fullImages: [CGWindowID: NSImage] = [:]
 
-    /// Which windows want a full-resolution capture. Written from view
-    /// lifecycle on the main thread, read from the capture task.
-    private var fullResRequests: Set<CGWindowID> = []
+    /// Which windows want a full-resolution capture, and how many views are
+    /// asking. Written from view lifecycle on the main thread, read from the
+    /// capture task.
+    ///
+    /// Counted rather than a set. SwiftUI rebuilds a tile by bringing the
+    /// replacement on before taking the old one off, so a set saw
+    /// insert-then-remove and ended up with no request at all while a tile was
+    /// still on screen — the preview went sharp and then fell back a moment
+    /// later, on every rebuild.
+    private var fullResRequests: [CGWindowID: Int] = [:]
     private let requestLock = NSLock()
 
     /// Called on the main queue after each successful refresh.
@@ -140,13 +147,19 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     /// request/release, so two panes showing the same window both have to let go.
     public func requestFullResolution(for windowID: CGWindowID) {
         requestLock.lock()
-        fullResRequests.insert(windowID)
+        fullResRequests[windowID, default: 0] += 1
         requestLock.unlock()
     }
 
     public func releaseFullResolution(for windowID: CGWindowID) {
         requestLock.lock()
-        fullResRequests.remove(windowID)
+        if let count = fullResRequests[windowID] {
+            if count <= 1 {
+                fullResRequests[windowID] = nil
+            } else {
+                fullResRequests[windowID] = count - 1
+            }
+        }
         requestLock.unlock()
     }
 
@@ -159,7 +172,7 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     private func currentFullResRequests() -> Set<CGWindowID> {
         requestLock.lock()
         defer { requestLock.unlock() }
-        return fullResRequests
+        return Set(fullResRequests.keys)
     }
 
     /// The native-size image for a window, if one was requested and captured.
@@ -211,7 +224,8 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             // granted. Unlike the old preflight check this also asks the system
             // for access, so a first run can still surface the prompt. The loop
             // keeps running, so granting permission recovers without a restart.
-            await publish(state: .degraded, thumbnails: [:], nsImages: [:], fullImages: [:])
+            await publish(state: .degraded, thumbnails: [:], nsImages: [:],
+                          fullImages: [:], stillWanted: [])
             return
         }
 
@@ -265,7 +279,8 @@ public final class WindowThumbnailCache: @unchecked Sendable {
             }
         }
 
-        await publish(state: .polling, thumbnails: captured, nsImages: wrapped, fullImages: full)
+        await publish(state: .polling, thumbnails: captured, nsImages: wrapped,
+                      fullImages: full, stillWanted: wanted)
     }
 
     @available(macOS 14.0, *)
@@ -310,14 +325,21 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         state newState: State,
         thumbnails newThumbnails: [CGWindowID: CGImage],
         nsImages newImages: [CGWindowID: NSImage],
-        fullImages newFullImages: [CGWindowID: NSImage]
+        fullImages newFullImages: [CGWindowID: NSImage],
+        stillWanted: Set<CGWindowID>
     ) async {
         await MainActor.run {
             let changed = self.state != newState
             self.state = newState
             self.thumbnails = newThumbnails
             self.nsImages = newImages
-            self.fullImages = newFullImages
+            // A window that is still wanted but produced nothing this pass —
+            // momentarily offscreen, or the capture failed — keeps the image it
+            // had. Replacing wholesale would drop a good preview back to the
+            // capped thumbnail for a beat.
+            self.fullImages = self.fullImages
+                .filter { stillWanted.contains($0.key) }
+                .merging(newFullImages) { _, fresh in fresh }
             if changed { self.onStateChange?(newState) }
             self.onUpdate?()
         }

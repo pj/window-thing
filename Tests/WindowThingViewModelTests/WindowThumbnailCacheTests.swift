@@ -132,18 +132,37 @@ struct WindowThumbnailFullResolutionTests {
         #expect(cache.fullResolutionRequestCount == 0)
     }
 
-    @Test("Requesting the same window twice does not double-count")
-    func requestsAreASet() {
-        // Two panes can draw the same window large; releasing once should not
-        // leave a phantom request behind.
+    @Test("Requests are counted, so overlapping views don't cancel each other")
+    func requestsAreCounted() {
+        // This was a set, and it was wrong. SwiftUI rebuilds a tile by bringing
+        // the replacement on before taking the old one off, so the sequence is
+        // request(new), release(old) — with a set that left no request at all
+        // while a tile was still on screen, and the preview visibly dropped back
+        // to the capped thumbnail a moment after appearing.
         let cache = WindowThumbnailCache()
 
-        cache.requestFullResolution(for: 7)
-        cache.requestFullResolution(for: 7)
-        #expect(cache.fullResolutionRequestCount == 1)
+        cache.requestFullResolution(for: 7)   // tile appears
+        cache.requestFullResolution(for: 7)   // replacement appears
+        cache.releaseFullResolution(for: 7)   // original goes away
 
-        cache.releaseFullResolution(for: 7)
+        #expect(cache.fullResolutionRequestCount == 1, "a live tile lost its request")
+
+        cache.releaseFullResolution(for: 7)   // replacement goes away too
         #expect(cache.fullResolutionRequestCount == 0)
+    }
+
+    @Test("Releasing more often than requesting doesn't go negative")
+    func unbalancedReleaseIsHarmless() {
+        let cache = WindowThumbnailCache()
+
+        cache.requestFullResolution(for: 3)
+        cache.releaseFullResolution(for: 3)
+        cache.releaseFullResolution(for: 3)
+        #expect(cache.fullResolutionRequestCount == 0)
+
+        // And the window can still be requested again afterwards.
+        cache.requestFullResolution(for: 3)
+        #expect(cache.fullResolutionRequestCount == 1)
     }
 
     @Test("Windows are requested independently")
