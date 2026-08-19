@@ -248,12 +248,20 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         let wanted = currentFullResRequests()
 
         // Only ever a few — one per pane drawing a window large — so these are
-        // captured unscaled without reintroducing the cost the cap removed.
+        // captured at the display's own pixel density without reintroducing the
+        // cost the cap removed.
+        let pixelScale = await MainActor.run { NSScreen.main?.backingScaleFactor ?? 2 }
+
         var full: [CGWindowID: NSImage] = [:]
         for window in targets where wanted.contains(window.windowID) {
-            if let image = await Self.screenshot(of: window, maxEdge: nil) {
+            if let image = await Self.screenshot(of: window, maxEdge: nil, pixelScale: pixelScale) {
+                // Size in *points*, not pixels. That is what tells AppKit the
+                // image has more pixels than points — i.e. that it is a Retina
+                // representation — so it is drawn at full density rather than
+                // being treated as an oversized 1x image.
                 full[window.windowID] = NSImage(
-                    cgImage: image, size: NSSize(width: image.width, height: image.height))
+                    cgImage: image,
+                    size: NSSize(width: window.frame.width, height: window.frame.height))
             }
         }
 
@@ -261,8 +269,16 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     }
 
     @available(macOS 14.0, *)
+    /// - Parameters:
+    ///   - maxEdge: cap on the longest edge, in pixels, or nil for no cap.
+    ///   - pixelScale: pixels per point to capture at. ScreenCaptureKit sizes
+    ///     are in pixels while `window.frame` is in points, so capturing at 1
+    ///     yields a non-Retina image — which reads as blur anywhere it is drawn
+    ///     near its own size on a Retina display.
     private static func screenshot(
-        of window: SCWindow, maxEdge: CGFloat? = maxThumbnailEdge
+        of window: SCWindow,
+        maxEdge: CGFloat? = maxThumbnailEdge,
+        pixelScale: CGFloat = 1
     ) async -> CGImage? {
         let filter = SCContentFilter(desktopIndependentWindow: window)
 
@@ -277,12 +293,12 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         // Scaling once here, on the capture task, costs nothing extra: the
         // compositor is doing it either way.
         let longestEdge = max(window.frame.width, window.frame.height)
-        let scale: CGFloat = {
+        let fit: CGFloat = {
             guard let maxEdge, longestEdge > maxEdge else { return 1 }
             return maxEdge / longestEdge
         }()
-        config.width = max(1, Int(window.frame.width * scale))
-        config.height = max(1, Int(window.frame.height * scale))
+        config.width = max(1, Int(window.frame.width * fit * pixelScale))
+        config.height = max(1, Int(window.frame.height * fit * pixelScale))
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
 
