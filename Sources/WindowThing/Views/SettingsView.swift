@@ -29,14 +29,42 @@ struct SettingsView: View {
 // MARK: - General Settings
 
 struct GeneralSettingsView: View {
-    @State private var launchAtLogin = false
-    @State private var showDockIcon = false
+    @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var loginItemError: String?
+
+    /// Bound through a custom Binding rather than `.onChange`, whose two-argument
+    /// form is macOS 14+ while this app still targets 13. Reads the real state
+    /// back afterwards so a rejected change doesn't leave the switch lying.
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { newValue in
+                do {
+                    try LoginItem.setEnabled(newValue)
+                    loginItemError = nil
+                } catch {
+                    loginItemError = error.localizedDescription
+                }
+                launchAtLogin = LoginItem.isEnabled
+            }
+        )
+    }
 
     var body: some View {
         Form {
             Section {
-                Toggle("Launch at Login", isOn: $launchAtLogin)
-                Toggle("Show in Dock", isOn: $showDockIcon)
+                Toggle("Launch at Login", isOn: launchAtLoginBinding)
+                    .disabled(!LoginItem.isSupported)
+
+                if let reason = LoginItem.unavailableReason {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if let loginItemError {
+                    Text(loginItemError)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
 
             Section("Activation Hotkey") {

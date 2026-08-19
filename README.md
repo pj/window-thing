@@ -25,10 +25,11 @@ Inspired by the window management functionality from [modal-commander](https://g
 Releases are Developer ID signed, notarized and stapled, so they run on any Mac without a
 Gatekeeper prompt.
 
-### Download
+### Download (recommended)
 
 Grab `WindowThing.zip` from the [latest release](https://github.com/pj/window-thing/releases/latest),
-unzip it, and drag `WindowThing.app` to `/Applications`.
+unzip it, and drag `WindowThing.app` to `/Applications`. Enable **Launch at Login** in
+Preferences if you want it to start with your Mac.
 
 It keeps itself up to date from there: there's a **Check for Updates…** item in the menubar menu,
 and it checks once a day in the background. Updates are cryptographically signed, and installing
@@ -52,9 +53,11 @@ This installs the prebuilt, signed app — not a source build. That matters: mac
 Accessibility grant to the code signature, so an unsigned build would lose its permission on
 every upgrade. See [RELEASE.md](RELEASE.md) for the details.
 
-Nix installs update by bumping the flake input, not through the in-app updater — `/nix/store` is
-read-only, so the app detects this and shows "Updates managed by nix" instead of an update check
-that could only fail.
+**Nix installs do not self-update.** `/nix/store` is read-only, so Sparkle cannot replace the
+bundle; the app detects this and shows "Updates managed by nix" rather than offering a check that
+could only fail. Updating means bumping the flake input, and starting it at login means writing
+your own launchd agent — "Launch at Login" is disabled for the same reason, since nix owns the
+process. If you'd rather the app manage both itself, use the download above.
 
 ### Building from source
 
