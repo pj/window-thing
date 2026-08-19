@@ -1749,13 +1749,11 @@ private struct AppWindowGroup: View {
         }
     }
 
+    /// Cached: this is read from a view body, once per app box per pane, so
+    /// resolving it here meant a Launch Services lookup and a disk read of the
+    /// bundle's icon on every pass of the render loop.
     private var appIcon: NSImage? {
-        if let bundleId = app.bundleId,
-           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-            return NSWorkspace.shared.icon(forFile: url.path)
-        }
-        return NSWorkspace.shared.runningApplications
-            .first { $0.localizedName == app.name }?.icon
+        AppIconCache.shared.icon(bundleId: app.bundleId, appName: app.name)
     }
 }
 
@@ -1912,7 +1910,7 @@ private struct WindowTile: View {
     }
 
     private var appIcon: NSImage? {
-        NSRunningApplication(processIdentifier: window.pid)?.icon
+        AppIconCache.shared.icon(pid: window.pid)
     }
 }
 
