@@ -84,6 +84,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
 
+        MainThreadStallDetector.shared.start()
+        MainThreadWatchdog.shared.start()
+
+        // Proves the instruments actually fire, so a quiet log can be trusted
+        // as "nothing stalled" rather than "nothing was watching".
+        if CommandLine.arguments.contains("--selftest-stall") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                RenderProbe.breadcrumb("selftest")
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+
         // Request accessibility permissions
         requestAccessibilityPermissions()
 

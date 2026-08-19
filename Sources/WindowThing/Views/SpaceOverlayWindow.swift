@@ -384,6 +384,24 @@ private struct DividerSlot: Identifiable {
 
 private let dividerThickness: CGFloat = 14
 
+/// Bumped each time the thumbnail cache refreshes.
+///
+/// Carried through the environment rather than passed down as a property.
+/// As a property it was part of every intermediate view's value, so a capture
+/// invalidated the whole chooser tree and forced a full re-layout — measured at
+/// ~112ms of blocked main thread every few seconds. Read from the environment,
+/// only the tiles that actually draw a thumbnail are invalidated.
+private struct ThumbnailRevisionKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    var thumbnailRevision: Int {
+        get { self[ThumbnailRevisionKey.self] }
+        set { self[ThumbnailRevisionKey.self] = newValue }
+    }
+}
+
 /// Walk the tree once, resolving every leaf and every sibling boundary to a
 /// concrete rect. Doing this up front (rather than nesting HStacks) keeps each
 /// cell's true screen rect available for window hit-testing.
@@ -504,7 +522,11 @@ struct SpaceOverlayView: View {
     var body: some View {
         GeometryReader { geo in
             let canvas = CGRect(origin: .zero, size: geo.size)
-            let (tiles, dividers) = resolve(in: canvas)
+            let _ = RenderProbe.breadcrumb("SpaceOverlayView.body")
+            let (tiles, dividers) = RenderProbe.measure("SpaceOverlayView.resolve") {
+                resolve(in: canvas)
+            }
+            let _ = RenderProbe.flushTallies("previous pass built")
 
             ZStack {
                 BlurBackdrop()
@@ -594,7 +616,6 @@ struct SpaceOverlayView: View {
                     windows: windows(for: slot),
                     isHovered: hoveredPath == slot.path,
                     isDropTarget: dropTarget == slot.path,
-                    thumbnailRevision: viewModel.thumbnailRevision,
                     runningApps: viewModel.runningApps,
                     topInset: chromeOverlap(for: slot),
                     onChoose: { choose($0, on: slot) },
@@ -647,6 +668,7 @@ struct SpaceOverlayView: View {
         // The dividers read their translation in this space instead, which is
         // pinned to the canvas and stays put.
         .coordinateSpace(name: Self.canvasSpace)
+        .environment(\.thumbnailRevision, viewModel.thumbnailRevision)
     }
 
     /// Fixed reference frame for divider drags. See `.coordinateSpace` above.
@@ -942,7 +964,6 @@ private struct CellView: View {
     let windows: [WTWindow]
     let isHovered: Bool
     let isDropTarget: Bool
-    let thumbnailRevision: Int
     let runningApps: [RunningAppInfo]
     /// Extra headroom for panes that reach under the floating layout bar.
     let topInset: CGFloat
@@ -1004,7 +1025,7 @@ private struct CellView: View {
             // Only the frontmost window is showing in reality, so show only
             // that — the glyph says the rest are behind it.
             ZStack {
-                WindowTile(window: windows[0], thumbnailRevision: thumbnailRevision, fills: true)
+                WindowTile(window: windows[0], fills: true)
                     .onTapGesture { onChoose(windows[0]) }
                 StackGlyph(count: windows.count)
             }
@@ -1012,7 +1033,6 @@ private struct CellView: View {
             PaneChooser(
                 windows: windows,
                 apps: runningApps,
-                thumbnailRevision: thumbnailRevision,
                 pinned: slot.node.pinned,
                 isEmpty: slot.node.type == .empty,
                 onChooseApp: onChooseApp,
@@ -1387,7 +1407,6 @@ private struct StackGlyph: View {
 private struct PaneChooser: View {
     let windows: [WTWindow]
     let apps: [RunningAppInfo]
-    let thumbnailRevision: Int
     let pinned: PinnedConfig?
     /// The pane holds nothing on purpose — the ghost box is its current choice.
     let isEmpty: Bool
@@ -1410,10 +1429,18 @@ private struct PaneChooser: View {
 
     var body: some View {
         GeometryReader { geo in
-            let metrics = metrics(for: geo.size.width)
+            let _ = RenderProbe.breadcrumb("PaneChooser.body")
+            let metrics = RenderProbe.measure("PaneChooser.metrics") {
+                self.metrics(for: geo.size.width)
+            }
+            let _ = RenderProbe.tally("PaneChooser")
 
             ScrollView(showsIndicators: false) {
-                VStack(spacing: spacing) {
+                // Lazy: a chooser lists every running app, but only a few rows
+                // are ever on screen. A plain VStack builds all of them —
+                // measured at 44 app groups and 51 window tiles for two panes,
+                // most of them scrolled out of sight.
+                LazyVStack(spacing: spacing) {
                     searchField
 
                     EmptyChoiceBox(isCurrent: isEmpty)
@@ -1428,7 +1455,6 @@ private struct PaneChooser: View {
                                 AppWindowGroup(
                                     app: group.app,
                                     windows: group.windows,
-                                    thumbnailRevision: thumbnailRevision,
                                     isCurrent: matchesPin(group.app),
                                     tileWidth: metrics.tile,
                                     tileGap: tileGap,
@@ -1619,7 +1645,6 @@ private struct PaneChooser: View {
 private struct AppWindowGroup: View {
     let app: RunningAppInfo
     let windows: [WTWindow]
-    let thumbnailRevision: Int
     let isCurrent: Bool
     let tileWidth: CGFloat
     let tileGap: CGFloat
@@ -1638,7 +1663,9 @@ private struct AppWindowGroup: View {
     private var boxHighlighted: Bool { hoveringBox && hoveredWindow == nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let _ = RenderProbe.tally("AppWindowGroup")
+        let _ = RenderProbe.breadcrumb("AppWindowGroup.body")
+        return RenderProbe.measure("AppWindowGroup") { VStack(alignment: .leading, spacing: 10) {
             header
 
             if windows.isEmpty {
@@ -1662,7 +1689,6 @@ private struct AppWindowGroup: View {
                         // it, and no accent either — the box carries selection.
                         WindowTile(
                             window: window,
-                            thumbnailRevision: thumbnailRevision,
                             showsAppLabel: false,
                             isCurrent: isPinnedWindow(window),
                             isHovered: hoveredWindow == window.id
@@ -1700,7 +1726,7 @@ private struct AppWindowGroup: View {
         .onTapGesture(perform: onChooseApp)
         .animation(.easeOut(duration: 0.12), value: isCurrent)
         .animation(.easeOut(duration: 0.12), value: boxHighlighted)
-    }
+        } }
 
     /// Marked only when the pin names this window, so an app-level pin
     /// highlights the box alone and doesn't imply a window was chosen.
@@ -1796,7 +1822,7 @@ private struct WindowTile: View {
     @Environment(\.colorScheme) private var scheme
 
     let window: WTWindow
-    let thumbnailRevision: Int
+    @Environment(\.thumbnailRevision) private var thumbnailRevision
     /// Fill the space offered instead of holding a fixed 16:10 card. Used when
     /// the tile stands for the whole pane, so it takes the pane's proportions.
     var fills = false
@@ -1810,6 +1836,8 @@ private struct WindowTile: View {
     var body: some View {
         // Referencing the revision is what re-reads the cache as captures land.
         let _ = thumbnailRevision
+        let _ = RenderProbe.tally("WindowTile")
+        let _ = RenderProbe.breadcrumb("WindowTile.body")
 
         VStack(alignment: .leading, spacing: 6) {
             if showsAppLabel { appLabel }

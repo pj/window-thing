@@ -68,6 +68,11 @@ public final class WindowThumbnailCache: @unchecked Sendable {
     /// Windows smaller than this in either dimension aren't worth a thumbnail.
     private static let minimumWindowEdge: CGFloat = 50
 
+    /// Longest edge of a captured thumbnail, in pixels. Comfortably above the
+    /// size they are drawn at — including on a Retina display — while keeping
+    /// them small enough that drawing a paneful costs nothing noticeable.
+    private static let maxThumbnailEdge: CGFloat = 480
+
     private var pollTask: Task<Void, Never>?
 
     /// How many times the capture loop has been started. Internal rather than
@@ -204,12 +209,19 @@ public final class WindowThumbnailCache: @unchecked Sendable {
         let filter = SCContentFilter(desktopIndependentWindow: window)
 
         let config = SCStreamConfiguration()
-        // Point-size rather than backing-store pixels: these are thumbnails, and
-        // capturing Retina-resolution copies of every window every few seconds
-        // is a lot of memory for no visible benefit. Matches the old capture's
-        // .nominalResolution.
-        config.width = max(1, Int(window.frame.width))
-        config.height = max(1, Int(window.frame.height))
+
+        // Captured at thumbnail size, not window size.
+        //
+        // These are only ever drawn a couple of hundred points wide, but they
+        // used to be captured at the window's full dimensions — so a chooser
+        // showing 26 of them made SwiftUI downscale 26 full-size images on every
+        // render pass. Measured at ~280ms of blocked main thread for one pane.
+        // Scaling once here, on the capture task, costs nothing extra: the
+        // compositor is doing it either way.
+        let longestEdge = max(window.frame.width, window.frame.height)
+        let scale = longestEdge > Self.maxThumbnailEdge ? Self.maxThumbnailEdge / longestEdge : 1
+        config.width = max(1, Int(window.frame.width * scale))
+        config.height = max(1, Int(window.frame.height * scale))
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
 

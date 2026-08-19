@@ -50,7 +50,9 @@ final class SpaceOverlayController {
         }
 
         // Shared model work happens once, not once per screen.
+        RenderProbe.breadcrumb("controller.show/refresh")
         viewModel.refresh()
+        RenderProbe.breadcrumb("controller.show/refreshRunningApps")
         viewModel.refreshRunningApps()
         viewModel.presentationCount += 1
         WindowThumbnailCache.shared.start()
