@@ -416,8 +416,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start thumbnail cache (requires Screen Recording permission — degrades gracefully)
         let interval = configManager.config.thumbnailCaptureInterval ?? 3.0
         WindowThumbnailCache.shared.updateInterval(interval)
+
+        // The state at this point is only "we started"; whether capture actually
+        // works isn't known until the first pass completes. Log the transitions
+        // instead, so the log says why thumbnails are missing rather than
+        // leaving it to be guessed at.
+        WindowThumbnailCache.shared.onStateChange = { state in
+            switch state {
+            case .polling:
+                debugLog(" Thumbnails: capturing (\(WindowThumbnailCache.shared.thumbnails.count) windows)")
+            case .degraded:
+                debugLog(" Thumbnails: unavailable — Screen Recording permission not granted."
+                    + " Grant it in System Settings > Privacy & Security > Screen Recording;"
+                    + " no restart needed.")
+            case .unsupported:
+                debugLog(" Thumbnails: unavailable — needs macOS 14 or later. Showing app icons.")
+            case .stopped:
+                debugLog(" Thumbnails: stopped")
+            }
+        }
+
         WindowThumbnailCache.shared.start()
-        debugLog(" Thumbnail cache state: \(WindowThumbnailCache.shared.state), interval: \(interval)s")
+        debugLog(" Thumbnail cache started, interval: \(interval)s")
 
         debugLog(" Monitoring started")
     }
