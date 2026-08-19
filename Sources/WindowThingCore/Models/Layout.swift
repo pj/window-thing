@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 // MARK: - Cell Address
 
@@ -142,25 +143,44 @@ public struct PinnedConfig: Codable, Equatable, Sendable {
     public let bundleId: String?
     /// Specific window titles to pin. nil or empty = all windows of the app.
     public let windowTitles: [String]?
+
+    /// The exact window this pin was made from.
+    ///
+    /// Window ids are unique and unambiguous, which titles are not: two
+    /// documents called "notes.md" are indistinguishable by name, so a pin could
+    /// swap between them from one pass to the next. They do not survive the
+    /// window closing or the app relaunching, so this is a preference rather
+    /// than a requirement — matching falls back to the title, then to any window
+    /// of the same app.
+    public let windowId: CGWindowID?
+
     /// Optional sublayout describing internal pane structure for app integration.
     public let sublayout: SublayoutConfig?
 
-    public init(application: String?, bundleId: String?, windowTitles: [String]? = nil, sublayout: SublayoutConfig? = nil) {
+    public init(
+        application: String?,
+        bundleId: String?,
+        windowTitles: [String]? = nil,
+        windowId: CGWindowID? = nil,
+        sublayout: SublayoutConfig? = nil
+    ) {
         self.application = application
         self.bundleId = bundleId
         self.windowTitles = windowTitles?.isEmpty == true ? nil : windowTitles
+        self.windowId = windowId
         self.sublayout = sublayout
     }
 
     // Backward-compatible YAML decoding: accepts both `windowTitles` (new) and `windowTitle` (old).
     enum CodingKeys: String, CodingKey {
-        case application, bundleId, windowTitles, windowTitle, sublayout
+        case application, bundleId, windowTitles, windowTitle, windowId, sublayout
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         application = try c.decodeIfPresent(String.self, forKey: .application)
         bundleId = try c.decodeIfPresent(String.self, forKey: .bundleId)
+        windowId = try c.decodeIfPresent(CGWindowID.self, forKey: .windowId)
         if let titles = try c.decodeIfPresent([String].self, forKey: .windowTitles) {
             windowTitles = titles.isEmpty ? nil : titles
         } else if let single = try c.decodeIfPresent(String.self, forKey: .windowTitle) {
@@ -176,6 +196,7 @@ public struct PinnedConfig: Codable, Equatable, Sendable {
         try c.encodeIfPresent(application, forKey: .application)
         try c.encodeIfPresent(bundleId, forKey: .bundleId)
         try c.encodeIfPresent(windowTitles, forKey: .windowTitles)
+        try c.encodeIfPresent(windowId, forKey: .windowId)
         try c.encodeIfPresent(sublayout, forKey: .sublayout)
     }
 }

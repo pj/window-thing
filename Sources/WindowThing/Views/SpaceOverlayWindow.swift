@@ -702,14 +702,16 @@ struct SpaceOverlayView: View {
             activate(window)
             return
         }
-        // Pin this window specifically. The title is how it's recognised later;
-        // `LayoutManager.windowMatchScore` treats it as a preference, so if the
-        // title drifts the pane falls back to another window of the same app
-        // rather than emptying out.
+        // Pin this window specifically, identified three ways so the pin degrades
+        // instead of breaking: the id names it exactly for as long as it exists,
+        // the title recognises it again after a relaunch, and the app catches
+        // everything else. `LayoutManager.windowMatchScore` ranks them in that
+        // order, so a pane falls back rather than emptying out.
         let pinned = PinnedConfig(
             application: window.application,
             bundleId: window.bundleId,
-            windowTitles: window.title.isEmpty ? nil : [window.title]
+            windowTitles: window.title.isEmpty ? nil : [window.title],
+            windowId: window.id
         )
         let node = LayoutNode(type: .pinned, percentage: slot.node.percentage, pinned: pinned)
         replaceNode(at: slot.path, with: node, actionName: "Pin Window")

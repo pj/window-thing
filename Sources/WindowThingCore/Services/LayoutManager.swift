@@ -472,16 +472,34 @@ public enum LayoutCalculator {
         return true
     }
 
-    /// Ranks a candidate: 2 when the pinned title still matches, 1 for an
-    /// app-level match, 0 for no match at all.
+    /// How well a window answers to a pin, best first:
+    ///
+    /// - 3 — it *is* the pinned window, by id. Unambiguous.
+    /// - 2 — a title the pin recorded still matches.
+    /// - 1 — some window of the right application.
+    /// - 0 — not a candidate.
+    ///
+    /// The id is checked within an app match, never on its own: ids are reused
+    /// once a window closes, so a stale one could otherwise name an unrelated
+    /// window belonging to some other application.
     public static func windowMatchScore(_ window: Window, pinned: PinnedConfig) -> Int {
         guard windowMatches(window, pinned: pinned) else { return 0 }
+        if let pinnedId = pinned.windowId, window.id == pinnedId { return 3 }
         guard let titles = pinned.windowTitles, !titles.isEmpty else { return 1 }
         return titles.contains(where: { window.title.contains($0) }) ? 2 : 1
     }
 
     /// The best candidate for a pinned config: the pinned window itself when it
     /// is still recognisable, otherwise any window of the same app.
+    ///
+    /// Ties are broken by window id, and that matters more than it looks. The
+    /// candidate list comes from `CGWindowListCopyWindowInfo`, which is ordered
+    /// by z-order, so it reshuffles whenever the user focuses a different
+    /// window. Picking "the highest score" out of that with no tie-break meant
+    /// two equally-good windows — two documents with the same name, say —
+    /// traded places every time the front window changed, and whichever lost
+    /// fell through to the stack. The layout appeared to flicker between two
+    /// arrangements on its own.
     public static func bestMatchingWindow(
         for pinned: PinnedConfig,
         in windows: [Window],
@@ -489,7 +507,13 @@ public enum LayoutCalculator {
     ) -> Window? {
         windows
             .filter { !placed.contains($0.id) && windowMatches($0, pinned: pinned) }
-            .max { windowMatchScore($0, pinned: pinned) < windowMatchScore($1, pinned: pinned) }
+            .sorted { lhs, rhs in
+                let lhsScore = windowMatchScore(lhs, pinned: pinned)
+                let rhsScore = windowMatchScore(rhs, pinned: pinned)
+                if lhsScore != rhsScore { return lhsScore > rhsScore }
+                return lhs.id < rhs.id
+            }
+            .first
     }
 
     /// Find a window matching the pinned config

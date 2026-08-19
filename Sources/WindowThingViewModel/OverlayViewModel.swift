@@ -598,13 +598,18 @@ public class OverlayViewModel: ObservableObject {
     private func applyWindowSelection(at index: Int) {
         guard let window = filteredWindows[safe: index] else { return }
 
-        // Pin by app, not by window title. `LayoutManager.windowMatches` treats
-        // a recorded title as a substring the live title must still contain, and
-        // real titles carry volatile detail — a zoom level, a document name, an
-        // unread count. As soon as that drifts the pin stops matching and the
-        // window falls through to the stack instead of staying in its pane.
+        // Identify the window by id as well as by app. The id is exact for as
+        // long as the window lives, which titles are not — real ones carry
+        // volatile detail like a zoom level or an unread count, and two
+        // documents can share a name outright. Scoring treats all of these as
+        // preferences, so once the id goes stale the pin falls back to the app
+        // rather than the pane emptying out.
         pinToSelectorTarget(
-            PinnedConfig(application: window.application, bundleId: window.bundleId)
+            PinnedConfig(
+                application: window.application,
+                bundleId: window.bundleId,
+                windowId: window.id
+            )
         )
         // Bring window to front (behind overlay)
         bringWindowToFront(window)
