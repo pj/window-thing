@@ -100,9 +100,9 @@ tart run windowthing-test &                    # opens a VM window
 
 **Toolchain note**: the VM ships Xcode 16.4 (macOS 15 SDK) while a current
 developer machine has Xcode 26. Anything from a newer SDK — `glassEffect()`,
-for instance — must sit behind `#if compiler(>=6.2)` or the VM (and the
-`macos-14` CI runners) will fail to build the app target. The VM therefore
-renders the pre-macOS-26 fallback path, not Liquid Glass.
+for instance — must sit behind `#if compiler(>=6.2)` or the VM will fail to
+build the app target. The VM therefore renders the pre-macOS-26 fallback path,
+not Liquid Glass.
 
 ---
 

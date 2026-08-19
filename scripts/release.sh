@@ -97,8 +97,9 @@ log "Releasing $APP_NAME $TAG from branch $BRANCH"
 # Skips the two suites that drive real windows through the Accessibility API.
 # They are timing-dependent and flake often enough to block a release for no
 # good reason ("Switch between layouts moves windows" is the usual culprit).
-# CI runs them separately on every push — see .github/workflows/ci.yml, which
-# skips the same two in its unit job.
+# Nothing runs them automatically now that the GitHub workflows are gone — run
+# `swift test` with no filter, or `vm/run-tests.sh` for a clean machine with
+# real Accessibility permissions, when you want them exercised.
 #
 # --skip matches the suite's *type* name, not its @Suite display name.
 log "Running tests (excluding the window-driving suites)"
