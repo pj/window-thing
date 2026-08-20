@@ -25,6 +25,13 @@ public class WindowManager: WindowManaging {
     /// run several processes' frame writes at once.
     private let cacheLock = NSLock()
 
+    /// Whether a window is one the layout should place, by CGWindowID.
+    ///
+    /// Answering costs a round trip into the owning app, but the answer never
+    /// changes for a given window, so it is asked once when the window is first
+    /// seen rather than on every refresh.
+    private var manageableCache: [CGWindowID: Bool] = [:]
+
     private func cachedWindow(id: CGWindowID) -> Window? {
         cacheLock.lock()
         defer { cacheLock.unlock() }
@@ -108,7 +115,9 @@ public class WindowManager: WindowManaging {
 
         let minSize = ConfigManager.shared.config.minimumWindowSize
         // Cache AX window elements per PID to avoid repeated API calls
-        var axWindowsByPID: [pid_t: [AXUIElement]] = [:]
+        // Outer nil: not fetched yet. Inner nil: the app could not be asked, so
+        // its windows fail open rather than silently dropping out of layouts.
+        var axWindowsByPID: [pid_t: [AXUIElement]?] = [:]
 
         for windowInfo in windowList {
             guard let windowID = windowInfo[kCGWindowNumber as String] as? CGWindowID,
@@ -136,21 +145,29 @@ public class WindowManager: WindowManaging {
                 continue
             }
 
+            // Menus, popovers and panels that happen to be layer-0 and large
+            // enough to pass the checks above. Resolved from the Accessibility
+            // subrole, and cached per window, so the round trip is paid once
+            // when a window first appears rather than on every refresh — most
+            // passes ask nothing at all.
+            let alreadyJudged = manageableCacheContains(windowID)
+            if !alreadyJudged, axWindowsByPID[ownerPID] == nil {
+                axWindowsByPID[ownerPID] = Self.axWindows(ofProcess: ownerPID)
+            }
+            guard isStandardWindow(
+                pid: ownerPID, windowId: windowID,
+                axWindows: alreadyJudged ? nil : axWindowsByPID[ownerPID] ?? nil
+            ) else { continue }
+
             var title = windowInfo[kCGWindowName as String] as? String ?? ""
 
             // kCGWindowName requires Screen Recording permission and may be empty.
             // Fall back to AX API, matching by window position.
             if title.isEmpty {
                 if axWindowsByPID[ownerPID] == nil {
-                    let appElement = AXUIElementCreateApplication(ownerPID)
-                    var ref: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &ref) == .success {
-                        axWindowsByPID[ownerPID] = ref as? [AXUIElement] ?? []
-                    } else {
-                        axWindowsByPID[ownerPID] = []
-                    }
+                    axWindowsByPID[ownerPID] = Self.axWindows(ofProcess: ownerPID)
                 }
-                if let axWindows = axWindowsByPID[ownerPID] {
+                if let axWindows = axWindowsByPID[ownerPID] ?? nil {
                     title = axTitle(from: axWindows, matchingX: x, y: y) ?? ""
                 }
             }
@@ -171,7 +188,101 @@ public class WindowManager: WindowManaging {
         cacheLock.lock()
         windowCache = windows
         cacheLock.unlock()
+        pruneManageableCache(keeping: Set(
+            windowList.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }))
         return windows
+    }
+
+    /// The app's Accessibility window list, or nil when it cannot be read.
+    private static func axWindows(ofProcess pid: pid_t) -> [AXUIElement]? {
+        let appElement = AXUIElementCreateApplication(pid)
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement, kAXWindowsAttribute as CFString, &ref) == .success else { return nil }
+        return ref as? [AXUIElement] ?? []
+    }
+
+    private func manageableCacheContains(_ windowID: CGWindowID) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return manageableCache[windowID] != nil
+    }
+
+    /// Forget windows that have gone, so the cache tracks what is on screen.
+    private func pruneManageableCache(keeping live: Set<CGWindowID>) {
+        cacheLock.lock()
+        manageableCache = manageableCache.filter { live.contains($0.key) }
+        cacheLock.unlock()
+    }
+
+    /// Whether the Accessibility API considers this a standard, placeable
+    /// window — as opposed to a menu, popover, sheet or panel.
+    ///
+    /// The size and layer checks in `getWindows` don't catch these: an app is
+    /// free to draw its right-click menu as an ordinary layer-0 window big
+    /// enough to pass, and several do. `AXStandardWindow` is the marker of a
+    /// real window; menus and popovers either report a different subrole or are
+    /// not in the app's Accessibility window list at all.
+    ///
+    /// Fails *open*. If the app can't be asked — permissions, or it simply isn't
+    /// answering — its windows are managed as before. Treating silence as "not a
+    /// window" would make an unresponsive app drop out of every layout, which is
+    /// far worse than occasionally moving a menu.
+    /// The rule itself, separated from the round trips that gather its inputs
+    /// so the policy — particularly what happens when an app won't answer — can
+    /// be checked without a running window server.
+    ///
+    /// - Parameters:
+    ///   - subrole: the window's Accessibility subrole, nil if it has none.
+    ///   - foundInAXList: whether the app listed this window at all.
+    ///   - axListReadable: whether the app's window list could be read.
+    public static func isManageable(
+        subrole: String?, foundInAXList: Bool, axListReadable: Bool
+    ) -> Bool {
+        // Silence is not a verdict. An app that cannot be asked keeps the
+        // behaviour it had before this filter existed.
+        guard axListReadable else { return true }
+        // Listed by CoreGraphics but not by Accessibility: a menu or popover.
+        guard foundInAXList else { return false }
+        return subrole == kAXStandardWindowSubrole as String
+    }
+
+    private func isStandardWindow(
+        pid: pid_t, windowId: CGWindowID, axWindows: [AXUIElement]?
+    ) -> Bool {
+        cacheLock.lock()
+        if let cached = manageableCache[windowId] {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
+        // nil means the app's window list could not be read: fail open.
+        guard let axWindows else { return true }
+
+        var subrole: String?
+        var found = false
+        for element in axWindows {
+            var elementId: CGWindowID = 0
+            guard _AXUIElementGetWindow(element, &elementId) == .success,
+                  elementId == windowId else { continue }
+
+            found = true
+            var subroleRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                element, kAXSubroleAttribute as CFString, &subroleRef) == .success {
+                subrole = subroleRef as? String
+            }
+            break
+        }
+
+        let result = Self.isManageable(
+            subrole: subrole, foundInAXList: found, axListReadable: true)
+
+        cacheLock.lock()
+        manageableCache[windowId] = result
+        cacheLock.unlock()
+        return result
     }
 
     /// Returns the AX window title that best matches the given screen position.
