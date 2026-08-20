@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Yams
 @testable import WindowThingCore
 
 /// How a pin finds its window again.
@@ -112,27 +113,81 @@ struct WindowIdentityTests {
 
     // MARK: - Persistence
 
-    @Test("The id survives a round trip through the config")
-    func idIsCodable() throws {
+    @Test("The id is never written to the config")
+    func idIsNotPersisted() throws {
+        // An id only means anything to the running window server. Saved and
+        // read back on the next launch it names either nothing or, once reused,
+        // an unrelated window of the same app — the mistaken identity the id was
+        // added to prevent.
         let pin = PinnedConfig(
             application: "Editor", bundleId: "com.test.editor",
             windowTitles: ["notes.md"], windowId: 42)
 
-        let decoded = try JSONDecoder().decode(
-            PinnedConfig.self, from: JSONEncoder().encode(pin))
+        let encoded = try JSONEncoder().encode(pin)
+        let text = String(decoding: encoded, as: UTF8.self)
 
-        #expect(decoded.windowId == 42)
-        #expect(decoded.windowTitles == ["notes.md"])
+        #expect(!text.contains("windowId"), "a session-scoped id reached the config")
+        #expect(text.contains("notes.md"), "the title must persist — it is what survives a restart")
     }
 
-    @Test("A config written before ids decodes with none")
-    func olderConfigsDecode() throws {
-        let json = #"{"application":"Editor","bundleId":"com.test.editor"}"#
-        let decoded = try JSONDecoder().decode(
-            PinnedConfig.self, from: Data(json.utf8))
+    @Test("An id in a file on disk is ignored")
+    func idIsNotReadBack() throws {
+        // Hand-edited, or written by a build that did persist them.
+        let json = #"{"application":"Editor","bundleId":"com.test.editor","windowId":42}"#
+        let decoded = try JSONDecoder().decode(PinnedConfig.self, from: Data(json.utf8))
 
         #expect(decoded.windowId == nil)
         #expect(decoded.application == "Editor")
+    }
+
+    @Test("A config written before ids decodes unchanged")
+    func olderConfigsDecode() throws {
+        let json = #"{"application":"Editor","bundleId":"com.test.editor","windowTitles":["notes.md"]}"#
+        let decoded = try JSONDecoder().decode(PinnedConfig.self, from: Data(json.utf8))
+
+        #expect(decoded.windowId == nil)
+        #expect(decoded.application == "Editor")
+        #expect(decoded.windowTitles == ["notes.md"])
+    }
+
+    @Test("The id stays out of the YAML the config is actually written in")
+    func idIsNotInYAML() throws {
+        // The JSON check above exercises the same encode(to:), but YAML is the
+        // format on disk — worth asserting against the real one rather than by
+        // analogy.
+        let node = LayoutNode(
+            type: .pinned,
+            percentage: 100,
+            pinned: PinnedConfig(
+                application: "Editor", bundleId: "com.test.editor",
+                windowTitles: ["notes.md"], windowId: 42)
+        )
+
+        let yaml = try YAMLEncoder().encode(node)
+
+        #expect(!yaml.contains("windowId"), "a session-scoped id reached config.yaml")
+        #expect(!yaml.contains("42"), "the id leaked under some other key")
+        #expect(yaml.contains("notes.md"))
+
+        // And it comes back with no id, so a reload cannot resurrect one.
+        let decoded = try YAMLDecoder().decode(LayoutNode.self, from: yaml)
+        #expect(decoded.pinned?.windowId == nil)
+        #expect(decoded.pinned?.windowTitles == ["notes.md"])
+    }
+
+    @Test("A reloaded pin still finds its window by title")
+    func survivesReloadViaTitle() throws {
+        // What the user actually gets after a restart: the id is gone, so the
+        // title has to carry the pin. This is why both are recorded.
+        let pin = PinnedConfig(
+            application: "Editor", bundleId: "com.test.editor",
+            windowTitles: ["notes.md"], windowId: 42)
+
+        let reloaded = try JSONDecoder().decode(
+            PinnedConfig.self, from: JSONEncoder().encode(pin))
+
+        let live = [window(id: 900, title: "other.md"), window(id: 901, title: "notes.md")]
+        #expect(LayoutCalculator.bestMatchingWindow(for: reloaded, in: live)?.id == 901)
     }
 }
 
