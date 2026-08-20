@@ -167,6 +167,8 @@ usage() {
     echo "  --filter NAME       Run only tests matching NAME"
     echo "  --integration-only  Run only PrimaryDisplayLayoutTests"
     echo "  --dual-display      Spin up a virtual second display before testing"
+    echo "  --ui                Also drive the interface (add/rename/delete a layout)"
+    echo "  --ui-only           Run only the interface tests"
     echo "  --no-tcc            Skip TCC permission setup"
   echo "  --force-tcc         Re-run TCC grants even if already granted (use after VM rebuild)"
     echo ""
@@ -177,6 +179,8 @@ run_tests() {
     local test_filter=""
     local dual_display=false
     local skip_tcc=false
+    local run_ui=false
+    local ui_only=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -184,6 +188,8 @@ run_tests() {
             --filter)           test_filter="$2";                   shift 2 ;;
             --integration-only) test_filter="PrimaryDisplayLayoutTests"; shift ;;
             --dual-display)     dual_display=true;                  shift ;;
+            --ui)               run_ui=true;                        shift ;;
+            --ui-only)          run_ui=true; ui_only=true;          shift ;;
             --no-tcc)           skip_tcc=true;                      shift ;;
             --force-tcc)        export FORCE_TCC=true;              shift ;;
             --help|-h)          usage; exit 0 ;;
@@ -305,11 +311,32 @@ run_tests() {
     fi
 
     local exit_code=0
-    if ssh_run "$ip" "$test_cmd 2>&1"; then
+    if [ "$ui_only" = true ]; then
+        log_info "Skipping the unit suite (--ui-only)"
+    elif ssh_run "$ip" "$test_cmd 2>&1"; then
         log_info "All tests passed."
     else
         log_error "Some tests failed."
         exit_code=1
+    fi
+
+    # ------------------------------------------------------------------ #
+    # Interface tests                                                       #
+    # These click things and take focus, which is exactly why they run in  #
+    # here rather than on whoever's machine is driving the VM.             #
+    # ------------------------------------------------------------------ #
+    if [ "$run_ui" = true ]; then
+        log_info "Running interface tests..."
+        # Through launchctl asuser: an SSH session has no Aqua session of its
+        # own, and nothing that draws a window or reads the Accessibility tree
+        # works without one.
+        if ssh_run "$ip" "sudo launchctl asuser 501 /bin/bash -lc \
+            'PROJECT_DIR=~/Projects/window_thing ~/Projects/window_thing/vm/scripts/ui-test.sh' 2>&1"; then
+            log_info "Interface tests passed."
+        else
+            log_error "Interface tests failed."
+            exit_code=1
+        fi
     fi
 
     # Close TextEdit

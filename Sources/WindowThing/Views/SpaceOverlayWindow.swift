@@ -173,6 +173,9 @@ final class SpaceOverlayWindow: NSWindow {
     /// Esc peels one layer at a time: selector, then picker, then selection,
     /// then the surface itself.
     private func dismissTopmostLayer() {
+        // A confirmation is the topmost layer and handles its own dismissal.
+        if viewModel.isConfirmationPresented { return }
+
         if viewModel.isTextFieldFocused, viewModel.renamingLayoutId == nil {
             // Searching: give focus back before the surface starts closing.
             viewModel.isTextFieldFocused = false
@@ -233,6 +236,10 @@ final class SpaceOverlayWindow: NSWindow {
         // While a text field has focus its keystrokes are text, not commands:
         // a bare letter is a cell address here, and space closes the surface.
         if viewModel.isTextFieldFocused { return false }
+
+        // A confirmation owns the keyboard while it is up — including Esc, which
+        // should cancel it rather than close the surface behind it.
+        if viewModel.isConfirmationPresented { return false }
 
         // ⌘Z / ⇧⌘Z — the surface saves as you go, so undo is the only way back.
         if modifiers.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "z" {
@@ -1252,6 +1259,10 @@ private struct OverlayIconButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(help)
+        // Without this these announce as their SF Symbol name — VoiceOver read
+        // one of them as "rectangle.split.2x1". The help text is already the
+        // sentence a person would use, so it serves as the label too.
+        .accessibilityLabel(help)
     }
 }
 
@@ -1994,6 +2005,8 @@ private struct LayoutSwitcherBar: View {
             }
             .buttonStyle(.plain)
             .help("New layout")
+            .accessibilityLabel("New layout")
+            .accessibilityIdentifier("layout.add")
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -2004,6 +2017,8 @@ private struct LayoutSwitcherBar: View {
             }
             .buttonStyle(.plain)
             .help("Close (esc)")
+            .accessibilityLabel("Close layout surface")
+            .accessibilityIdentifier("surface.close")
         }
         .padding(8)
         // Opaque, not a tint: the bar reads as a fixed object floating over the
@@ -2021,7 +2036,22 @@ private struct LayoutPill: View {
     let isActive: Bool
 
     @State private var deleteHovering = false
+    @State private var confirmingDelete = false
     @FocusState private var nameFocused: Bool
+
+    /// Mirrors the dialog's state onto the view model so the window stands down
+    /// while it is up. Routed through a Binding rather than set in the button
+    /// action because the dialog can also be dismissed by clicking away, and the
+    /// flag has to come back down however that happens.
+    private var confirmingDeleteBinding: Binding<Bool> {
+        Binding(
+            get: { confirmingDelete },
+            set: { presented in
+                confirmingDelete = presented
+                viewModel.isConfirmationPresented = presented
+            }
+        )
+    }
 
     private var isRenaming: Bool { viewModel.renamingLayoutId == layout.id }
 
@@ -2033,8 +2063,25 @@ private struct LayoutPill: View {
                 Menu("Menu Key") { menuKeyItems }
                 Button("Duplicate") { viewModel.duplicateLayout(layout) }
                 Divider()
-                Button("Delete", role: .destructive) { viewModel.deleteLayout(layout) }
+                Button("Delete", role: .destructive) { confirmingDeleteBinding.wrappedValue = true }
                     .disabled(viewModel.layouts.count <= 1)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Layout \(layout.name)")
+            .accessibilityIdentifier("layout.pill.\(layout.name)")
+            // Deleting writes the config straight away and there is no undo for
+            // it, unlike edits to a layout's panes.
+            .confirmationDialog(
+                "Delete “\(layout.name)”?",
+                isPresented: confirmingDeleteBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Layout", role: .destructive) {
+                    viewModel.deleteLayout(layout)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This layout will be removed from your configuration. This cannot be undone.")
             }
     }
 
@@ -2187,7 +2234,7 @@ private struct LayoutPill: View {
 
     private var deleteButton: some View {
         Button {
-            viewModel.deleteLayout(layout)
+            confirmingDeleteBinding.wrappedValue = true
         } label: {
             Image(systemName: "trash")
                 .font(.system(size: 11, weight: .medium))
@@ -2200,6 +2247,10 @@ private struct LayoutPill: View {
         .disabled(viewModel.layouts.count <= 1)
         .opacity(viewModel.layouts.count <= 1 ? 0.25 : 1)
         .help("Delete this layout")
+        // Named, not just "button". VoiceOver announced every control in this
+        // surface identically, and nothing could address one from outside.
+        .accessibilityLabel("Delete layout \(layout.name)")
+        .accessibilityIdentifier("layout.delete.\(layout.name)")
     }
 
     private func beginRename() {

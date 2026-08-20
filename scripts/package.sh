@@ -105,6 +105,11 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$PROJECT_DIR/packaging/Info.plist" "$APP_DIR/Contents/Info.plist"
 
+# AppleScript terminology. Named by OSAScriptingDefinition in the Info.plist,
+# and looked up in Resources — without it the app has no vocabulary and every
+# command fails as "not handled".
+cp "$PROJECT_DIR/packaging/WindowThing.sdef" "$APP_DIR/Contents/Resources/"
+
 plutil -replace CFBundleShortVersionString -string "$VERSION"      "$APP_DIR/Contents/Info.plist"
 plutil -replace CFBundleVersion            -string "$BUILD_NUMBER" "$APP_DIR/Contents/Info.plist"
 

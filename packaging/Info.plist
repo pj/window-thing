@@ -37,6 +37,12 @@
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <!-- AppleScript support; terminology lives in WindowThing.sdef. -->
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>OSAScriptingDefinition</key>
+    <string>WindowThing.sdef</string>
+
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © Paul Johnson. All rights reserved.</string>
 

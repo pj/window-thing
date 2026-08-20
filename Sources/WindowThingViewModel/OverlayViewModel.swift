@@ -59,6 +59,12 @@ public class OverlayViewModel: ObservableObject {
     /// address — so it has to stand down while those keystrokes are text.
     @Published public var isTextFieldFocused: Bool = false
 
+    /// True while a confirmation is on screen. The window has to stand down for
+    /// the same reason as above, and for one more: Esc peels a layer off the
+    /// surface, so without this it would dismiss the surface out from under the
+    /// dialog rather than cancelling it.
+    @Published public var isConfirmationPresented: Bool = false
+
     // Undo
     public let undoManager = UndoManager()
     private var preDragSnapshot: LayoutNode?

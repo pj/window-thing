@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+
+<!--
+  AppleScript terminology for WindowThing.
+
+  These are model-level verbs: they do what the menubar menu does, without
+  going through the layout surface. That makes them good for scripting and for
+  driving the app in tests, and deliberately unsuitable for testing the surface
+  itself — `delete layout` here bypasses the confirmation the UI shows, because
+  a script has already said what it wants.
+-->
+<dictionary title="WindowThing Terminology">
+    <suite name="WindowThing Suite" code="WThg"
+           description="Apply and inspect window layouts.">
+
+        <command name="list layouts" code="WThglayt"
+                 description="The name of every configured layout, in order.">
+            <cocoa class="WTListLayoutsCommand"/>
+            <result type="list of text" description="Layout names."/>
+        </command>
+
+        <command name="current layout" code="WThgcurl"
+                 description="The name of the layout most recently applied, or an empty string.">
+            <cocoa class="WTCurrentLayoutCommand"/>
+            <result type="text" description="Layout name."/>
+        </command>
+
+        <command name="apply layout" code="WThgappl"
+                 description="Apply a layout by name. Matching is case-insensitive.">
+            <cocoa class="WTApplyLayoutCommand"/>
+            <direct-parameter type="text" description="The layout's name."/>
+            <result type="boolean" description="False if no layout has that name."/>
+        </command>
+
+        <command name="add layout" code="WThgaddl"
+                 description="Create a layout and return its name.">
+            <cocoa class="WTAddLayoutCommand"/>
+            <result type="text" description="The new layout's name."/>
+        </command>
+
+        <command name="rename layout" code="WThgrenl"
+                 description="Rename a layout.">
+            <cocoa class="WTRenameLayoutCommand"/>
+            <direct-parameter type="text" description="The layout's current name."/>
+            <parameter name="to" code="newn" type="text" description="The new name.">
+                <cocoa key="newName"/>
+            </parameter>
+            <result type="boolean" description="False if no layout has that name."/>
+        </command>
+
+        <command name="delete layout" code="WThgdell"
+                 description="Delete a layout. Bypasses the confirmation the interface shows, since a script has already said what it wants.">
+            <cocoa class="WTDeleteLayoutCommand"/>
+            <direct-parameter type="text" description="The layout's name."/>
+            <result type="boolean" description="False if no layout has that name, or it is the last one."/>
+        </command>
+
+        <command name="show layout surface" code="WThgshow"
+                 description="Open the layout surface.">
+            <cocoa class="WTShowSurfaceCommand"/>
+            <parameter name="pinned" code="pinn" type="boolean" optional="yes"
+                       description="Keep it open when the app loses focus. Useful for screenshots and tests, which take focus away by their nature.">
+                <cocoa key="pinned"/>
+            </parameter>
+        </command>
+
+        <command name="hide layout surface" code="WThghide"
+                 description="Close the layout surface.">
+            <cocoa class="WTHideSurfaceCommand"/>
+        </command>
+
+        <command name="surface is open" code="WThgopen"
+                 description="Whether the layout surface is currently showing.">
+            <cocoa class="WTSurfaceIsOpenCommand"/>
+            <result type="boolean"/>
+        </command>
+
+    </suite>
+</dictionary>

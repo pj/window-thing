@@ -39,7 +39,7 @@ one always asks first.
 
 ```nix
 {
-  inputs.window_thing.url = "github:pj/window-thing?ref=v0.1.0";
+  inputs.window_thing.url = "github:pj/window-thing?ref=v0.4.0";
 }
 ```
 
@@ -73,6 +73,31 @@ scripts/package.sh --no-sign     # → build/WindowThing.app
 
 A source build is fine for development, but it is ad-hoc signed, so macOS will make you
 re-grant Accessibility after every rebuild.
+
+## Scripting
+
+WindowThing is scriptable, so layouts can be applied from other tools:
+
+```applescript
+tell application "WindowThing"
+    list layouts                          --> {"Fullscreen", "Half Split", …}
+    current layout                        --> "Half Split"
+    apply layout "Thirds"
+
+    add layout                            --> "Layout 6"
+    rename layout "Layout 6" to "Coding"
+    delete layout "Coding"
+
+    show layout surface
+    hide layout surface
+    surface is open                       --> true
+end tell
+```
+
+`delete layout` deliberately bypasses the confirmation the interface shows — a
+script has already said what it wants. `show layout surface with pinned` keeps
+the surface up when the app loses focus, which is what screenshot and test
+tooling needs.
 
 ## Usage
 
@@ -175,20 +200,22 @@ Full list: https://eastmanreference.com/complete-list-of-applescript-key-codes
 ## Project Structure
 
 ```
-Sources/WindowThing/
-├── WindowThingApp.swift    # Main app entry point & AppDelegate
-├── Models/
-│   ├── Config.swift        # Configuration types
-│   ├── Layout.swift        # Layout data model
-│   └── Window.swift        # Window/Monitor types
-├── Services/
-│   ├── ConfigManager.swift # YAML config handling
-│   ├── LayoutManager.swift # Layout application logic
-│   └── WindowManager.swift # macOS window control (Accessibility API)
-└── Views/
-    ├── OverlayWindow.swift # Main overlay UI
-    └── SettingsView.swift  # Settings panel
+Sources/
+├── WindowThingCore/        # Layout model and placement. No UI, no AppKit views.
+│   ├── Models/             #   Layout, Config, Window, exclusions
+│   └── Services/           #   LayoutManager, WindowManager, ConfigManager
+├── WindowThingViewModel/   # OverlayViewModel, thumbnail and icon caches
+├── WindowThingCanvas/      # Generic tile views, no domain knowledge
+└── WindowThing/            # The app: menubar, layout surface, scripting
+    ├── WindowThingApp.swift
+    ├── ScriptingCommands.swift
+    └── Views/
+        ├── SpaceOverlayWindow.swift   # The layout surface
+        └── SettingsView.swift
 ```
+
+The layout surface is one screen: browsing windows and editing layouts happen in
+the same place, with one window per display sharing a single view model.
 
 ## Development
 

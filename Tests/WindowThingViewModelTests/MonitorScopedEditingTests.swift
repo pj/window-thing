@@ -423,3 +423,47 @@ struct LayoutListEditTests {
         #expect(vm.editingLayout?.name == "One")
     }
 }
+
+/// Deleting a layout writes the config immediately and cannot be undone, unlike
+/// edits to a layout's panes. The interface asks first, and while it is asking
+/// the surface has to stop treating keystrokes as its own.
+@Suite("Delete confirmation")
+struct DeleteConfirmationTests {
+
+    @Test("The surface stands down while a confirmation is up")
+    func confirmationSuppressesSurfaceKeys() {
+        // Esc peels a layer off the surface. Without this flag it would dismiss
+        // the surface out from under the dialog rather than cancelling it, and a
+        // bare letter would be read as a cell address.
+        let vm = OverlayViewModel()
+
+        #expect(!vm.isConfirmationPresented)
+        vm.isConfirmationPresented = true
+        #expect(vm.isConfirmationPresented)
+        vm.isConfirmationPresented = false
+        #expect(!vm.isConfirmationPresented)
+    }
+
+    @Test("Deleting still refuses to remove the last layout")
+    func lastLayoutSurvives() {
+        // The confirmation is in front of this, not instead of it.
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "Only", screenSets: [])])
+
+        vm.deleteLayout(vm.layouts[0])
+
+        #expect(vm.layouts.count == 1)
+    }
+
+    @Test("Confirming a delete removes exactly that layout")
+    func deleteRemovesTheRightOne() {
+        let (vm, _, _) = makeVM(layouts: [
+            Layout(name: "First", screenSets: []),
+            Layout(name: "Second", screenSets: []),
+            Layout(name: "Third", screenSets: []),
+        ])
+
+        vm.deleteLayout(vm.layouts[1])
+
+        #expect(vm.layouts.map(\.name) == ["First", "Third"])
+    }
+}

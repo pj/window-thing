@@ -98,6 +98,32 @@ tart run windowthing-test &                    # opens a VM window
 ./vm/capture-screenshots.sh --keep
 ```
 
+## Interface tests
+
+```sh
+./vm/run-tests.sh --ui        # unit suite, then drive the interface
+./vm/run-tests.sh --ui-only   # only the interface tests
+```
+
+`vm/scripts/ui-test.sh` runs inside the VM and exercises the layout lifecycle:
+create one, rename it, cancel a delete, then confirm one. It runs there rather
+than on a developer's machine because it opens windows, takes focus and clicks
+things — on your own Mac it takes over the screen while it works.
+
+It drives the app through the Accessibility API (`vm/scripts/ax-driver.swift`)
+rather than System Events, which could not see the layout surface reliably: the
+window sits at the screen-saver level and came and went between calls. The VM
+already grants `/usr/bin/swift` Accessibility, so a script run that way needs no
+further approval.
+
+The rename step uses the AppleScript interface and needs Automation consent for
+`osascript` → `com.windowthing.app`; `grant-tcc-access.sh` inserts it. Without
+it that one step reports as skipped and the rest still runs.
+
+The delete confirmation is the part that can only be checked this way. It exists
+to sit between a click and the model, so a test calling the model directly
+proves nothing about it.
+
 **Toolchain note**: the VM ships Xcode 16.4 (macOS 15 SDK) while a current
 developer machine has Xcode 26. Anything from a newer SDK — `glassEffect()`,
 for instance — must sit behind `#if compiler(>=6.2)` or the VM will fail to

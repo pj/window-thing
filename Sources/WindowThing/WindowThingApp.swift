@@ -39,6 +39,15 @@ struct WindowThingApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+
+    /// The live delegate.
+    ///
+    /// `NSApp.delegate` is not this object: SwiftUI's
+    /// `@NSApplicationDelegateAdaptor` installs a proxy of its own that forwards
+    /// to us, so casting `NSApp.delegate` to `AppDelegate` fails. Scripting
+    /// commands need a way in, and this is it.
+    private(set) static var shared: AppDelegate?
+
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     let spaceOverlay = SpaceOverlayController()
@@ -74,6 +83,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
         debugLog("App launched")
 
         // Hide dock icon - we're a menubar app
@@ -485,6 +495,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func toggleSpaceOverlay() {
         spaceOverlay.toggle()
+    }
+
+    /// Open the surface unconditionally. Scripts say what they want rather than
+    /// toggling, so a second `show` while it is open is not a close.
+    func showSpaceOverlayForScripting() {
+        NSApp.activate(ignoringOtherApps: true)
+        if !spaceOverlay.isVisible { spaceOverlay.show() }
     }
 
     /// Hosts `SettingsView` in a plain window. SwiftUI's `Settings` scene is only

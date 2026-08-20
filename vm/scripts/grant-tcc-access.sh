@@ -47,6 +47,15 @@ if [ -f "$TCC_DB_USER" ]; then
     tcc_insert "$TCC_DB_USER" "/usr/bin/swift"               1
     tcc_insert "$TCC_DB_USER" "com.apple.Terminal"           0
     tcc_insert "$TCC_DB_USER" "com.googlecode.iterm2"        0
+
+    # Automation: sending Apple events to WindowThing, which the interface tests
+    # use for the model-level verbs. A different service from Accessibility, and
+    # it is keyed on the pair — sender *and* target — hence the extra columns.
+    sqlite3 "$TCC_DB_USER" \
+        "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \
+         VALUES('kTCCServiceAppleEvents','/usr/bin/osascript',1,2,4,1,NULL,NULL,0,'com.windowthing.app',NULL,0,$TIMESTAMP);" \
+        2>/dev/null && echo "  [ok] osascript -> com.windowthing.app (automation)" \
+                    || echo "  [skip] automation grant (rename test will be skipped)"
 else
     echo "  [warn] User TCC.db not found — skipping user-level grants"
 fi
