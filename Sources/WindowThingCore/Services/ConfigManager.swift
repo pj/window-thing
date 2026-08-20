@@ -63,6 +63,17 @@ public class ConfigManager: ConfigProviding {
             #   - stack: Multiple windows in same space
             #     - stackRemaining: true  # Stacks ALL remaining windows here
             #   - float_zoomed: Floating + zoomed windows
+            #
+            # excludedWindows: windows layouts should leave alone. Menus and
+            # popovers are skipped automatically; this is for real windows that
+            # look like any other, such as Finder's Get Info. Every field given
+            # must match. Omit the key for the built-in defaults; set it to []
+            # to manage everything.
+            #
+            #   excludedWindows:
+            #     - bundleId: com.apple.finder
+            #       titleContains: " Info"
+            #     - application: Photos
 
             """
 
@@ -90,6 +101,7 @@ public class ConfigManager: ConfigProviding {
             pollIntervalMs: updated.pollIntervalMs,
             minimumWindowWidth: updated.minimumWindowWidth,
             minimumWindowHeight: updated.minimumWindowHeight,
+            excludedWindows: updated.excludedWindows,
             cellHotKeys: updated.cellHotKeys,
             cellPickerHotKey: updated.cellPickerHotKey,
             thumbnailCaptureInterval: updated.thumbnailCaptureInterval

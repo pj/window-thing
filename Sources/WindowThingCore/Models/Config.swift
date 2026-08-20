@@ -35,6 +35,16 @@ public struct AppConfig: Codable, Sendable {
     public var minimumWindowWidth: CGFloat
     public var minimumWindowHeight: CGFloat
 
+    /// Windows layouts should leave alone, beyond what can be detected
+    /// automatically. Absent means `WindowExclusion.defaults`; present replaces
+    /// them entirely, so an empty list turns exclusions off.
+    public var excludedWindows: [WindowExclusion]?
+
+    /// The rules actually in force.
+    public var effectiveExclusions: [WindowExclusion] {
+        excludedWindows ?? WindowExclusion.defaults
+    }
+
     // Cell hotkeys: key is CellAddress string ("1", "2", "a", …)
     public var cellHotKeys: [String: HotKeyConfig]?
 
@@ -58,6 +68,7 @@ public struct AppConfig: Codable, Sendable {
         pollIntervalMs: Int,
         minimumWindowWidth: CGFloat,
         minimumWindowHeight: CGFloat,
+        excludedWindows: [WindowExclusion]? = nil,
         cellHotKeys: [String: HotKeyConfig]? = nil,
         cellPickerHotKey: HotKeyConfig? = nil,
         thumbnailCaptureInterval: TimeInterval? = nil
@@ -71,6 +82,7 @@ public struct AppConfig: Codable, Sendable {
         self.pollIntervalMs = pollIntervalMs
         self.minimumWindowWidth = minimumWindowWidth
         self.minimumWindowHeight = minimumWindowHeight
+        self.excludedWindows = excludedWindows
         self.cellHotKeys = cellHotKeys
         self.cellPickerHotKey = cellPickerHotKey
         self.thumbnailCaptureInterval = thumbnailCaptureInterval

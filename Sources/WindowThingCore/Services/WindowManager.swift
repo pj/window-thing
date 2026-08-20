@@ -114,6 +114,7 @@ public class WindowManager: WindowManaging {
         }
 
         let minSize = ConfigManager.shared.config.minimumWindowSize
+        let exclusions = ConfigManager.shared.config.effectiveExclusions
         // Cache AX window elements per PID to avoid repeated API calls
         // Outer nil: not fetched yet. Inner nil: the app could not be asked, so
         // its windows fail open rather than silently dropping out of layouts.
@@ -175,14 +176,22 @@ public class WindowManager: WindowManaging {
             // Get bundle ID
             let bundleId = NSRunningApplication(processIdentifier: ownerPID)?.bundleIdentifier
 
-            windows.append(Window(
+            let candidate = Window(
                 id: windowID,
                 title: title,
                 application: ownerName,
                 bundleId: bundleId,
                 frame: WindowFrame(x: x, y: y, width: width, height: height),
                 pid: ownerPID
-            ))
+            )
+
+            // Windows named in the config. Some real windows are simply
+            // indistinguishable from transient ones by any attribute — Finder's
+            // Get Info is a standard, movable, resizable window — so they have
+            // to be asked for by name rather than guessed at.
+            if exclusions.excludes(candidate) { continue }
+
+            windows.append(candidate)
         }
 
         cacheLock.lock()
