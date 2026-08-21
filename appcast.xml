@@ -6,6 +6,14 @@
     <description>WindowThing release feed</description>
     <language>en</language>
     <item>
+      <title>Version 0.5.0</title>
+      <pubDate>Fri, 21 Aug 2026 14:51:18 +0000</pubDate>
+      <sparkle:version>48</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/pj/window-thing/releases/download/v0.5.0/WindowThing.zip" length="2351194" type="application/octet-stream" sparkle:edSignature="hgQMynrqBNuGg52I/OmKxgdjPCUTCU+OQXkSuVZN4TY7LZxvDa/AP+QQO+q5ZO/Vhm4OHyxhX9yMZZOLRinzAg==" />
+    </item>
+    <item>
       <title>Version 0.4.0</title>
       <pubDate>Wed, 19 Aug 2026 01:11:10 +0000</pubDate>
       <sparkle:version>32</sparkle:version>
