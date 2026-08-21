@@ -133,6 +133,10 @@ private struct OnboardingStepView: View {
                 .font(.system(size: 48, weight: .light))
                 .foregroundStyle(Color.accentColor)
                 .frame(height: 60)
+                // Decorative: the title beside it already says what the step is,
+                // and without this VoiceOver reads out the SF Symbol's name —
+                // "rectangle.3.group".
+                .accessibilityHidden(true)
 
             VStack(spacing: 6) {
                 Text(step.title)

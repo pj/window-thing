@@ -336,10 +336,17 @@ run_tests() {
             "${SSH_USER}@${ip}:~/Projects/window_thing/vm/scripts/"
 
         log_info "Running interface tests..."
-        # Through launchctl asuser: an SSH session has no Aqua session of its
-        # own, and nothing that draws a window or reads the Accessibility tree
-        # works without one.
-        if ssh_run "$ip" "sudo launchctl asuser 501 /bin/bash -lc \
+        # Two layers here, and both are needed.
+        #
+        # `launchctl asuser` puts the command in the logged-in user's Aqua
+        # session: an SSH session has none of its own, and nothing that draws a
+        # window or reads the Accessibility tree works without one.
+        #
+        # `sudo -u` then drops back to that user. asuser runs its command as
+        # *root*, which built the project as root and left 500-odd root-owned
+        # files in .build that no later build could overwrite — and ran the app
+        # under test as root, which is not how anyone runs it.
+        if ssh_run "$ip" "sudo launchctl asuser 501 sudo -u ${SSH_USER} /bin/bash -lc \
             'PROJECT_DIR=~/Projects/window_thing ~/Projects/window_thing/vm/scripts/ui-test.sh' 2>&1"; then
             log_info "Interface tests passed."
         else

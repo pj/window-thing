@@ -8,7 +8,11 @@
 //   swift ax-driver.swift set-text "Layout name" "New Name"
 //   swift ax-driver.swift type "Layout name" "New Name"
 //   swift ax-driver.swift confirm
+//   swift ax-driver.swift key escape
+//   swift ax-driver.swift value "Search apps and windows"
+//   swift ax-driver.swift count "Delete layout "
 //   swift ax-driver.swift wait "Delete Layout" [seconds]
+//   swift ax-driver.swift gone "Delete Layout" [seconds]
 //
 // Why Accessibility rather than AppleScript: the VM grants /usr/bin/swift the
 // Accessibility permission already, so a script run this way needs no further
@@ -94,7 +98,7 @@ func control(labelled wanted: String) -> Control? {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let command = arguments.first else {
-    fail("usage: ax-driver.swift <list|press|exists|set-text|type|confirm|wait> [arguments]")
+    fail("usage: ax-driver.swift <list|press|exists|value|count|set-text|type|key|confirm|wait|gone> [arguments]")
 }
 
 switch command {
@@ -182,6 +186,56 @@ case "confirm":
     usleep(50_000)
     up?.post(tap: .cghidEventTap)
     print("pressed: return")
+
+case "key":
+    // A named key, for the ones the interface treats as commands.
+    guard arguments.count >= 2 else { fail("key needs a name") }
+    let codes: [String: CGKeyCode] = [
+        "escape": 0x35, "return": 0x24, "tab": 0x30, "space": 0x31, "delete": 0x33,
+    ]
+    guard let code = codes[arguments[1].lowercased()] else {
+        fail("unknown key '\(arguments[1])' — known: \(codes.keys.sorted().joined(separator: ", "))")
+    }
+    app.activate()
+    usleep(200_000)
+    let keySource = CGEventSource(stateID: .hidSystemState)
+    CGEvent(keyboardEventSource: keySource, virtualKey: code, keyDown: true)?
+        .post(tap: .cghidEventTap)
+    usleep(50_000)
+    CGEvent(keyboardEventSource: keySource, virtualKey: code, keyDown: false)?
+        .post(tap: .cghidEventTap)
+    print("key: \(arguments[1])")
+
+case "value":
+    // The label is how a control is addressed; its value is separate, and for a
+    // text field it is the contents.
+    guard arguments.count >= 2 else { fail("value needs a label") }
+    guard let target = control(labelled: arguments[1]) else {
+        fail("no control labelled '\(arguments[1])'")
+    }
+    var raw: CFTypeRef?
+    AXUIElementCopyAttributeValue(target.element, kAXValueAttribute as CFString, &raw)
+    print((raw as? String) ?? "")
+
+case "count":
+    // How many controls mention this — the layout list, the visible windows.
+    guard arguments.count >= 2 else { fail("count needs a substring") }
+    print(controls().filter { $0.label.contains(arguments[1]) }.count)
+
+case "gone":
+    // The opposite of `wait`: succeed once something has disappeared, so a test
+    // does not have to guess how long an animation takes.
+    guard arguments.count >= 2 else { fail("gone needs a label") }
+    let goneTimeout = Double(arguments.count > 2 ? arguments[2] : "5") ?? 5
+    let goneDeadline = Date().addingTimeInterval(goneTimeout)
+    while Date() < goneDeadline {
+        if control(labelled: arguments[1]) == nil {
+            print("gone: \(arguments[1])")
+            exit(0)
+        }
+        usleep(200_000)
+    }
+    fail("'\(arguments[1])' was still there after \(goneTimeout)s")
 
 case "wait":
     guard arguments.count >= 2 else { fail("wait needs a label") }

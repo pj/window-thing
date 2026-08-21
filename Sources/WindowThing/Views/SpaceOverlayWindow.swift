@@ -1096,6 +1096,15 @@ private struct CellControls: View {
     let onSplit: (SplitAxis) -> Void
     let onDelete: () -> Void
 
+    /// Names an action for the pane it belongs to. Every pane draws the same
+    /// row of controls, so without this both VoiceOver and anything driving the
+    /// interface see several identical "Split into columns" buttons and cannot
+    /// tell which is which.
+    private func paneLabel(_ action: String) -> String {
+        guard let addressLabel else { return action }
+        return "\(action) — pane \(addressLabel)"
+    }
+
     /// Width the bar needs before it starts clipping: the address chip plus
     /// five buttons and their dividers.
     private var isCompact: Bool { cellSize.width < 240 || cellSize.height < 110 }
@@ -1152,6 +1161,7 @@ private struct CellControls: View {
         OverlayIconButton(
             systemName: "pin.fill",
             help: isStack ? stackLockHelp : "Hold one app here",
+            axLabel: paneLabel(isStack ? stackLockHelp : "Hold one app here"),
             active: node.type == .pinned
         ) { onSetType(.pinned) }
             .disabled(isStack)
@@ -1160,23 +1170,29 @@ private struct CellControls: View {
         OverlayIconButton(
             systemName: "square.stack.3d.up.fill",
             help: "Everything else lands here",
+            axLabel: paneLabel("Everything else lands here"),
             active: isStack
         ) { onSetType(.stack) }
 
         separator
 
-        OverlayIconButton(systemName: "rectangle.split.2x1", help: "Split into columns") {
-            onSplit(.vertical)
-        }
-        OverlayIconButton(systemName: "rectangle.split.1x2", help: "Split into rows") {
-            onSplit(.horizontal)
-        }
+        OverlayIconButton(
+            systemName: "rectangle.split.2x1",
+            help: "Split into columns",
+            axLabel: paneLabel("Split into columns")
+        ) { onSplit(.vertical) }
+        OverlayIconButton(
+            systemName: "rectangle.split.1x2",
+            help: "Split into rows",
+            axLabel: paneLabel("Split into rows")
+        ) { onSplit(.horizontal) }
 
         if canDelete {
             separator
             OverlayIconButton(
                 systemName: "trash",
                 help: isStack ? stackLockHelp : "Remove this cell",
+                axLabel: paneLabel(isStack ? stackLockHelp : "Remove this cell"),
                 action: onDelete
             )
             .disabled(isStack)
@@ -1241,6 +1257,9 @@ private struct CellControls: View {
 private struct OverlayIconButton: View {
     let systemName: String
     let help: String
+    /// Spoken name, when it needs to differ from the tooltip — the pane controls
+    /// repeat across panes, so theirs say which pane they belong to.
+    var axLabel: String? = nil
     var active: Bool = false
     let action: () -> Void
 
@@ -1261,8 +1280,9 @@ private struct OverlayIconButton: View {
         .help(help)
         // Without this these announce as their SF Symbol name — VoiceOver read
         // one of them as "rectangle.split.2x1". The help text is already the
-        // sentence a person would use, so it serves as the label too.
-        .accessibilityLabel(help)
+        // sentence a person would use, so it serves as the label unless a
+        // caller needs something more specific.
+        .accessibilityLabel(axLabel ?? help)
     }
 }
 
@@ -1554,6 +1574,8 @@ private struct PaneChooser: View {
                 .foregroundColor(.primary.opacity(0.5))
 
             TextField("Search apps and windows", text: $query)
+                .accessibilityLabel("Search apps and windows")
+                .accessibilityIdentifier("chooser.search")
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(.primary)
@@ -1737,6 +1759,9 @@ private struct AppWindowGroup: View {
         .contentShape(RoundedRectangle(cornerRadius: 14))
         .onHover { hoveringBox = $0 }
         .onTapGesture(perform: onChooseApp)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("All windows of \(app.name)")
+        .accessibilityAddTraits(.isButton)
         .animation(.easeOut(duration: 0.12), value: isCurrent)
         .animation(.easeOut(duration: 0.12), value: boxHighlighted)
         } }
@@ -1873,6 +1898,14 @@ private struct WindowTile: View {
                 )
                 .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
         }
+        // Named so a particular window can be picked out. Untitled windows fall
+        // back to their app, which is all a person has to go on too.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            window.title.isEmpty
+                ? "Window of \(window.application)"
+                : "Window \(window.title) of \(window.application)"
+        )
         // Only a tile drawing a window large needs the native-size capture, and
         // only while it is on screen. Tied to the tile's own lifetime rather
         // than to the app label, which a filling tile may not show at all.

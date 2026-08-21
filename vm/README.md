@@ -101,28 +101,79 @@ tart run windowthing-test &                    # opens a VM window
 ## Interface tests
 
 ```sh
-./vm/run-tests.sh --ui        # unit suite, then drive the interface
-./vm/run-tests.sh --ui-only   # only the interface tests
+./vm/run-tests.sh --ui        # unit suite, then the interface
+./vm/run-tests.sh --ui-only   # only the interface
 ```
 
-`vm/scripts/ui-test.sh` runs inside the VM and exercises the layout lifecycle:
-create one, rename it, cancel a delete, then confirm one. It runs there rather
-than on a developer's machine because it opens windows, takes focus and clicks
-things — on your own Mac it takes over the screen while it works.
+Inside the VM, one file at a time:
 
-It drives the app through the Accessibility API (`vm/scripts/ax-driver.swift`)
-rather than System Events, which could not see the layout surface reliably: the
-window sits at the screen-saver level and came and went between calls. The VM
-already grants `/usr/bin/swift` Accessibility, so a script run that way needs no
-further approval.
+```sh
+~/Projects/window_thing/vm/scripts/ui-test.sh              # everything
+~/Projects/window_thing/vm/scripts/ui-test.sh 03-panes     # one file
+```
 
-The rename step uses the AppleScript interface and needs Automation consent for
-`osascript` → `com.windowthing.app`; `grant-tcc-access.sh` inserts it. Without
-it that one step reports as skipped and the rest still runs.
+They run there rather than on a developer's machine because they open windows,
+take focus and click things — on your own Mac they take over the screen while
+they work.
 
-The delete confirmation is the part that can only be checked this way. It exists
-to sit between a click and the model, so a test calling the model directly
-proves nothing about it.
+```
+vm/scripts/
+├── ui-test.sh          runner: builds the bundle, isolates the config, runs the files
+├── ui-lib.sh           assertions, app lifecycle, shared setup
+├── ax-driver.swift     reads and drives the interface through Accessibility
+└── ui-tests/
+    ├── 01-surface.sh      opening, closing, reopening, escape
+    ├── 02-layouts.sh      add, rename, delete with confirmation, cancel
+    ├── 03-panes.sh        splitting, pane type, removal, the stack's exception
+    ├── 04-keyboard.sh     text vs shortcuts, what each escape dismisses
+    ├── 05-chooser.sh      the window chooser and its search
+    └── 06-onboarding.sh   the first-run flow
+```
+
+### What belongs here
+
+Behaviour that exists **only in the interface**: focus, keyboard interception,
+dialogs, what a control is called. Layout arithmetic, window matching, exclusions
+and the view model are covered far more cheaply and thoroughly by `swift test` —
+duplicating that here would only make this slower and more brittle.
+
+The delete confirmation is the clearest example. It exists to sit between a click
+and the model, so a test that calls the model proves nothing about it.
+
+### Not covered
+
+- **Dragging**: resizing a pane by its divider, and dragging a pane to rearrange
+  it. Both need synthesised mouse drags rather than a control to press.
+- **Multi-monitor**: the surface puts a window on every display. Would need
+  `--dual-display` and per-screen assertions.
+- **The menubar**: status items live in the system's menu bar extras, not in the
+  app's own Accessibility tree, so the driver cannot reach them.
+- **Applying a layout to real windows**: covered by the integration suite, which
+  moves actual windows and checks where they land.
+- **Settings, quick move, the cell picker, Sparkle's update flow.**
+
+### How it drives the app
+
+Through the Accessibility API, not System Events, which could not see the layout
+surface reliably: the window sits at the screen-saver level and came and went
+between calls. The VM already grants `/usr/bin/swift` Accessibility, so a script
+run that way needs no further approval — which is why `ax-driver.swift` is run as
+a script and never compiled to a binary, since a compiled copy would be a
+different client with no permission.
+
+Three things that took some finding, recorded so they don't have to be found
+again:
+
+- The app is launched with `open`, not by running its executable. Launching it
+  directly leaves LaunchServices unaware it handles `com.windowthing.app`, and
+  Apple events time out — which reads as missing Automation consent.
+- Setting a SwiftUI text field's accessibility *value* does not write through to
+  its binding. The driver types real keystrokes, and focuses the field first:
+  the surface deliberately does not reclaim key focus, so its field can be on
+  screen and not first responder, with keystrokes going nowhere silently.
+- The UI phase runs under `launchctl asuser … sudo -u`. `asuser` alone runs as
+  root, which built the project as root and left hundreds of root-owned files in
+  `.build` that no later build could overwrite.
 
 **Toolchain note**: the VM ships Xcode 16.4 (macOS 15 SDK) while a current
 developer machine has Xcode 26. Anything from a newer SDK — `glassEffect()`,
