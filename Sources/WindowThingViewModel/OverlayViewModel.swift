@@ -324,7 +324,7 @@ public class OverlayViewModel: ObservableObject {
             editingLayout?.name = layouts[index].name
         }
         layoutManager.updateLayout(layouts[index])
-        configManager.saveLayouts(layouts)
+        persistLayouts()
     }
 
     public func cancelRename() {
@@ -353,12 +353,23 @@ public class OverlayViewModel: ObservableObject {
         autoSaveMeta()
     }
 
+    /// Write the working list through to the layout manager and the config.
+    ///
+    /// Both, always. The manager's list is what the menubar shows and what
+    /// `refresh()` re-reads whenever the surface opens, so saving only to the
+    /// config left a newly added layout in the file and nowhere else — it
+    /// appeared to save, then vanished the next time the surface was opened.
+    private func persistLayouts() {
+        layoutManager.setLayouts(layouts)
+        configManager.saveLayouts(layouts)
+    }
+
     /// Persist and apply layout changes to open windows.
     private func autoSave() {
         guard let layout = editingLayout else { return }
         layoutManager.updateLayout(layout)
         layoutManager.applyLayout(layout)
-        configManager.saveLayouts(layouts)
+        persistLayouts()
     }
 
     /// Persist metadata-only changes (name, hotkey) without repositioning windows.
@@ -366,7 +377,7 @@ public class OverlayViewModel: ObservableObject {
         if let layout = editingLayout {
             layoutManager.updateLayout(layout)
         }
-        configManager.saveLayouts(layouts)
+        persistLayouts()
     }
 
     // MARK: - Save / Cancel
@@ -376,7 +387,7 @@ public class OverlayViewModel: ObservableObject {
         layoutManager.updateLayout(layout)
         layoutManager.applyLayout(layout)
         originalLayouts = layouts
-        configManager.saveLayouts(layouts)
+        persistLayouts()
     }
 
     public func cancelEdits() {
@@ -397,7 +408,7 @@ public class OverlayViewModel: ObservableObject {
             screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
         )
         layouts.append(newLayout)
-        configManager.saveLayouts(layouts)
+        persistLayouts()
         selectLayout(at: layouts.count - 1)
         beginRename(newLayout)
     }
@@ -415,7 +426,7 @@ public class OverlayViewModel: ObservableObject {
         } else {
             layouts.append(copy)
         }
-        configManager.saveLayouts(layouts)
+        persistLayouts()
         if let newIdx = layouts.firstIndex(where: { $0.id == copy.id }) {
             selectLayout(at: newIdx)
         }
@@ -428,7 +439,7 @@ public class OverlayViewModel: ObservableObject {
         guard layouts.count > 1 else { return }
         layouts.removeAll { $0.id == layout.id }
         originalLayouts = layouts
-        configManager.saveLayouts(layouts)
+        persistLayouts()
         selectLayout(at: layouts.count - 1)
     }
 
@@ -727,7 +738,7 @@ public class OverlayViewModel: ObservableObject {
         refreshEditingRootNode()
         // Adding a display is a real change; it was previously left unsaved.
         layoutManager.updateLayout(updated)
-        configManager.saveLayouts(layouts)
+        persistLayouts()
     }
 
     public func removeMonitorFromScreenSet(_ key: String) {

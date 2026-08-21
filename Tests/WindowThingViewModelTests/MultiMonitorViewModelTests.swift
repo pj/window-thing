@@ -16,6 +16,8 @@ private class MockLayoutManager: LayoutManaging {
 
     func loadLayouts(from config: AppConfig) { layouts = config.layouts }
     func applyLayout(_ layout: Layout) { appliedLayouts.append(layout); currentLayout = layout; lastUsedLayout = layout }
+    func setLayouts(_ newLayouts: [Layout]) { layouts = newLayouts }
+
     func updateLayout(_ layout: Layout) {
         updatedLayouts.append(layout)
         if let i = layouts.firstIndex(where: { $0.id == layout.id }) { layouts[i] = layout }

@@ -685,6 +685,21 @@ public class LayoutManager: LayoutManaging {
         }
     }
 
+    /// Replace the whole list, keeping the current and last-used references
+    /// pointing at their layouts if those still exist — and dropping them if
+    /// they have just been deleted, rather than leaving a reference to a layout
+    /// the list no longer contains.
+    public func setLayouts(_ newLayouts: [Layout]) {
+        layouts = newLayouts
+
+        if let current = currentLayout {
+            currentLayout = newLayouts.first { $0.id == current.id }
+        }
+        if let last = lastUsedLayout {
+            lastUsedLayout = newLayouts.first { $0.id == last.id }
+        }
+    }
+
     public func applyLayout(_ layout: Layout) {
         let tEntry = CFAbsoluteTimeGetCurrent()
         let displays = windowManager.getDisplays()

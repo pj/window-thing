@@ -20,6 +20,7 @@ private class MockLayoutManager: LayoutManaging {
         updatedLayouts.append(layout)
         if let i = layouts.firstIndex(where: { $0.id == layout.id }) { layouts[i] = layout }
     }
+    func setLayouts(_ newLayouts: [Layout]) { layouts = newLayouts }
     func saveCurrentSetup(name: String) {}
     func loadSetup(_ setup: SavedSetup) {}
     func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws {}
@@ -465,5 +466,79 @@ struct DeleteConfirmationTests {
         vm.deleteLayout(vm.layouts[1])
 
         #expect(vm.layouts.map(\.name) == ["First", "Third"])
+    }
+}
+
+/// The layout list exists in two places: the view model's working copy, and the
+/// layout manager's canonical one that the menubar and every reopen read from.
+/// They have to agree, or a change appears to take and then quietly vanishes.
+@Suite("Layout list stays in sync")
+struct LayoutListSyncTests {
+
+    /// What reopening the surface does: re-read the manager's list.
+    private func reopen(_ vm: OverlayViewModel, _ manager: MockLayoutManager) {
+        vm.layouts = manager.layouts
+        vm.originalLayouts = vm.layouts
+    }
+
+    @Test("A new layout reaches the layout manager, not just the editor")
+    func addedLayoutReachesManager() {
+        // The reported bug: add a layout, name it, close the surface, and it is
+        // gone. updateLayout only replaced layouts it already knew about, so a
+        // brand new one was written to the config and then lost on the next
+        // reopen, which re-reads from the manager.
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Existing", screenSets: [])])
+
+        vm.addLayout()
+        vm.renameDraft = "Fresh"
+        vm.commitRename()
+
+        #expect(manager.layouts.map(\.name).contains("Fresh"),
+                "the manager never heard about the new layout")
+
+        reopen(vm, manager)
+        #expect(vm.layouts.map(\.name).contains("Fresh"),
+                "the new layout did not survive reopening the surface")
+    }
+
+    @Test("A duplicated layout reaches the layout manager")
+    func duplicatedLayoutReachesManager() {
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Original", screenSets: [])])
+
+        vm.duplicateLayout(vm.layouts[0])
+
+        #expect(manager.layouts.count == 2)
+        reopen(vm, manager)
+        #expect(vm.layouts.count == 2, "the duplicate did not survive reopening")
+    }
+
+    @Test("A deleted layout is gone from the layout manager too")
+    func deletedLayoutLeavesManager() {
+        // The mirror of the same fault: the editor dropped it, the manager kept
+        // it, so it came back on reopen and stayed in the menubar meanwhile.
+        let (vm, manager, _) = makeVM(layouts: [
+            Layout(name: "Keep", screenSets: []),
+            Layout(name: "Remove", screenSets: []),
+        ])
+
+        vm.deleteLayout(vm.layouts[1])
+
+        #expect(!manager.layouts.map(\.name).contains("Remove"),
+                "the manager still has the deleted layout")
+        reopen(vm, manager)
+        #expect(vm.layouts.map(\.name) == ["Keep"], "the deleted layout came back")
+    }
+
+    @Test("A rename reaches the layout manager")
+    func renameReachesManager() {
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Before", screenSets: [])])
+
+        vm.beginRename(vm.layouts[0])
+        vm.renameDraft = "After"
+        vm.commitRename()
+
+        #expect(manager.layouts.map(\.name) == ["After"])
+        reopen(vm, manager)
+        #expect(vm.layouts.map(\.name) == ["After"])
     }
 }

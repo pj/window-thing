@@ -20,6 +20,7 @@ private class MockLayoutManager: LayoutManaging {
         updatedLayouts.append(layout)
         if let i = layouts.firstIndex(where: { $0.id == layout.id }) { layouts[i] = layout }
     }
+    func setLayouts(_ newLayouts: [Layout]) { layouts = newLayouts }
     func saveCurrentSetup(name: String) {}
     func loadSetup(_ setup: SavedSetup) {}
     func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws {}

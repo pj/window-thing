@@ -40,6 +40,13 @@ public protocol LayoutManaging {
     func loadLayouts(from config: AppConfig)
     func applyLayout(_ layout: Layout)
     func updateLayout(_ layout: Layout)
+
+    /// Replace the whole list.
+    ///
+    /// `updateLayout` can only change a layout that is already known — it is
+    /// silent about one it has never seen — so adding, duplicating and deleting
+    /// need a way to say what the list *is* rather than how one entry changed.
+    func setLayouts(_ layouts: [Layout])
     func saveCurrentSetup(name: String)
     func loadSetup(_ setup: SavedSetup)
     func moveWindow(_ window: Window, toCellAt address: CellAddress, displays: [Display]) throws

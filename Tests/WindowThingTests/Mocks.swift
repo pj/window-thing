@@ -76,6 +76,8 @@ public class MockLayoutManager: LayoutManaging {
         lastUsedLayout = layout
     }
 
+    public func setLayouts(_ newLayouts: [Layout]) { layouts = newLayouts }
+
     public func updateLayout(_ layout: Layout) {
         updatedLayouts.append(layout)
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
