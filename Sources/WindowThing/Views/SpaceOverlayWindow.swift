@@ -2119,6 +2119,10 @@ private struct LayoutPill: View {
                         viewModel.isTextFieldFocused = true
                     }
                     .onDisappear { viewModel.isTextFieldFocused = false }
+                    // Unlabelled, this field was invisible to VoiceOver and to
+                    // anything driving the interface — a text box with no name.
+                    .accessibilityLabel("Layout name")
+                    .accessibilityIdentifier("layout.nameField")
             } else {
                 Text(layout.name.isEmpty ? "Untitled" : layout.name)
                     .font(.system(size: 14, weight: .medium))

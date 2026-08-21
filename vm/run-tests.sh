@@ -103,7 +103,7 @@ rsync_to_vm() {
     local src=$2
     local dst=$3
     sshpass -p "$SSH_PASS" rsync -az --delete \
-        --exclude '.build' --exclude '.git' --exclude 'vm' \
+        --exclude '.build' --exclude '.git' --exclude 'vm' --exclude 'build' \
         -e "ssh $SSH_OPTS" \
         "$src" "${SSH_USER}@${ip}:${dst}"
 }
@@ -326,6 +326,15 @@ run_tests() {
     # here rather than on whoever's machine is driving the VM.             #
     # ------------------------------------------------------------------ #
     if [ "$run_ui" = true ]; then
+        # The project sync excludes vm/ — the guest has no use for the harness,
+        # and vm/screenshots would be pointless traffic. The interface test does
+        # live in there, though, so send that directory across on its own.
+        log_info "Syncing interface test scripts..."
+        ssh_run "$ip" "mkdir -p ~/Projects/window_thing/vm/scripts"
+        sshpass -p "$SSH_PASS" rsync -az -e "ssh $SSH_OPTS" \
+            "$PROJECT_DIR/vm/scripts/" \
+            "${SSH_USER}@${ip}:~/Projects/window_thing/vm/scripts/"
+
         log_info "Running interface tests..."
         # Through launchctl asuser: an SSH session has no Aqua session of its
         # own, and nothing that draws a window or reads the Accessibility tree

@@ -43,14 +43,21 @@ fail() { echo "error: $*" >&2; exit 1; }
 
 # ---- toolchain (mirrors scripts/dev.sh and the nix devShell) --------------
 
-DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+# Asked for rather than assumed. The test VM has Xcode at
+# /Applications/Xcode_16.4.app, so hardcoding /Applications/Xcode.app meant this
+# script could not build the bundle there at all.
+DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p 2>/dev/null || true)}"
+[ -n "$DEVELOPER_DIR" ] || DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 XCODE_TOOLCHAIN="${DEVELOPER_DIR}/Toolchains/XcodeDefault.xctoolchain/usr/bin"
 export DEVELOPER_DIR
-export SDKROOT="${DEVELOPER_DIR}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
 export PATH="${XCODE_TOOLCHAIN}:${PATH}"
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null \
+    || echo "${DEVELOPER_DIR}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")"
 SWIFT="${XCODE_TOOLCHAIN}/swift"
 
-[ -x "$SWIFT" ] || fail "Xcode toolchain not found at $XCODE_TOOLCHAIN"
+[ -x "$SWIFT" ] || SWIFT="$(command -v swift || true)"
+[ -n "$SWIFT" ] && [ -x "$SWIFT" ] \
+    || fail "no swift toolchain found (DEVELOPER_DIR=$DEVELOPER_DIR)"
 
 # ---- version -------------------------------------------------------------
 

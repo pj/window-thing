@@ -17,6 +17,10 @@ set -uo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$HOME/Projects/window_thing}"
 APP="$PROJECT_DIR/build/WindowThing.app"
+# Run as a script through /usr/bin/swift, not compiled to a binary first.
+# Accessibility is granted to /usr/bin/swift by path, so a compiled copy would be
+# a different client with no permission and every query would come back empty —
+# which reads as "the control isn't there" rather than "I wasn't allowed to look".
 AX="swift $PROJECT_DIR/vm/scripts/ax-driver.swift"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -69,7 +73,12 @@ sleep 1
 info "Launching with the layout surface open"
 # --screenshot space opens the surface and pins it, so it survives this script
 # taking focus — which it must, to drive anything.
-"$APP/Contents/MacOS/WindowThing" --screenshot space >/tmp/ui-test-app.log 2>&1 &
+#
+# Through `open`, not by running the binary directly. Launching the executable
+# straight leaves LaunchServices unaware that this process is the handler for
+# com.windowthing.app, and Apple events sent to it simply time out — which reads
+# as "Automation isn't granted" when the grant is in fact fine.
+open -n -a "$APP" --args --screenshot space
 sleep 8
 
 if ! pgrep -x WindowThing >/dev/null; then
@@ -104,26 +113,35 @@ else
     fail "adding a layout did nothing ($before -> $after)"
 fi
 
-# The new layout is whichever name wasn't there before.
+# A new layout has no name yet: addLayout() creates it empty and opens the
+# rename field, so the user names it as the first thing they do. Its delete
+# button is therefore labelled "Delete layout " with nothing after it, and that
+# is what the next step renames.
 NEW_LAYOUT=$($AX list 2>/dev/null | sed -n 's/.*Delete layout //p' | tail -1)
-echo "     new layout: '$NEW_LAYOUT'"
+if [ -z "$NEW_LAYOUT" ]; then
+    pass "a new layout starts unnamed, ready to be renamed"
+else
+    fail "expected a new layout to start unnamed, got '$NEW_LAYOUT'"
+fi
 
 # --------------------------------------------------------------------------- #
 # Rename                                                                       #
 # --------------------------------------------------------------------------- #
 
 info "Renaming it"
+# Through the interface, not the scripting verb. Adding a layout opens the
+# rename field straight away, so this is the path a person actually takes — and
+# it keeps the test off Apple events, which need Automation consent on top of
+# everything else.
 RENAMED="Renamed By Test"
-if osascript -e "tell application \"WindowThing\" to rename layout \"$NEW_LAYOUT\" to \"$RENAMED\"" >/dev/null 2>&1; then
-    sleep 2
-    expect_control "Delete layout $RENAMED" "the rename reaches the interface"
-    expect_no_control "Delete layout $NEW_LAYOUT" "the old name is gone"
-else
-    # Sending Apple events needs Automation consent for this sender and target.
-    # Worth reporting rather than failing: the rest of the lifecycle still runs.
-    echo -e "  ${YELLOW}skip${NC}  rename (AppleScript unavailable — Automation not granted?)"
-    RENAMED="$NEW_LAYOUT"
-fi
+expect_control "Layout name" "the rename field is open and reachable"
+
+$AX type "Layout name" "$RENAMED" >/dev/null 2>&1
+$AX confirm >/dev/null 2>&1
+sleep 2
+
+expect_control "Delete layout $RENAMED" "the rename takes effect"
+expect_no_control "Layout name" "the rename field closes on submit"
 
 # --------------------------------------------------------------------------- #
 # Delete — cancelled                                                           #

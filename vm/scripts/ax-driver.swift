@@ -6,6 +6,8 @@
 //   swift ax-driver.swift press "Delete layout Scratch"
 //   swift ax-driver.swift exists "Delete layout Scratch"
 //   swift ax-driver.swift set-text "Layout name" "New Name"
+//   swift ax-driver.swift type "Layout name" "New Name"
+//   swift ax-driver.swift confirm
 //   swift ax-driver.swift wait "Delete Layout" [seconds]
 //
 // Why Accessibility rather than AppleScript: the VM grants /usr/bin/swift the
@@ -92,7 +94,7 @@ func control(labelled wanted: String) -> Control? {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let command = arguments.first else {
-    fail("usage: ax-driver.swift <list|press|exists|set-text|wait> [arguments]")
+    fail("usage: ax-driver.swift <list|press|exists|set-text|type|confirm|wait> [arguments]")
 }
 
 switch command {
@@ -126,6 +128,60 @@ case "set-text":
         target.element, kAXValueAttribute as CFString, arguments[2] as CFTypeRef)
     guard result == .success else { fail("setting '\(arguments[1])' failed: \(result.rawValue)") }
     print("set: \(arguments[1]) = \(arguments[2])")
+
+case "type":
+    // Real keystrokes, not AXValue. Setting a SwiftUI TextField's accessibility
+    // value does not write through to its binding, so the field looked changed
+    // and the model never heard about it. Typing is what a person does and what
+    // the binding actually observes.
+    //
+    // Focus has to be arranged first. The layout surface deliberately does not
+    // reclaim key focus when it loses it, so its text field can be on screen and
+    // and not first responder — keystrokes then go nowhere at all, silently.
+    guard arguments.count >= 3 else { fail("type needs a field label and some text") }
+    guard let field = control(labelled: arguments[1]) else {
+        fail("no control labelled '\(arguments[1])'")
+    }
+
+    app.activate()
+    usleep(300_000)
+    AXUIElementSetAttributeValue(
+        field.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    usleep(300_000)
+
+    var focusedNow: CFTypeRef?
+    AXUIElementCopyAttributeValue(
+        field.element, kAXFocusedAttribute as CFString, &focusedNow)
+    guard (focusedNow as? Bool) == true else {
+        fail("could not focus '\(arguments[1])' — typing would go nowhere")
+    }
+
+    let typeSource = CGEventSource(stateID: .hidSystemState)
+    for character in arguments[2].utf16 {
+        var unit = character
+        for isDown in [true, false] {
+            guard let event = CGEvent(
+                keyboardEventSource: typeSource, virtualKey: 0, keyDown: isDown) else { continue }
+            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            event.post(tap: .cghidEventTap)
+        }
+        usleep(20_000)
+    }
+    print("typed: \(arguments[2]) into \(arguments[1])")
+
+case "confirm":
+    // Commit a text field. Setting its value does not submit it — SwiftUI's
+    // onSubmit runs on Return — so the keystroke has to actually be delivered.
+    // Posting it needs Accessibility, which /usr/bin/swift already has here.
+    app.activate()
+    usleep(200_000)
+    let source = CGEventSource(stateID: .hidSystemState)
+    let down = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true)
+    let up = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false)
+    down?.post(tap: .cghidEventTap)
+    usleep(50_000)
+    up?.post(tap: .cghidEventTap)
+    print("pressed: return")
 
 case "wait":
     guard arguments.count >= 2 else { fail("wait needs a label") }

@@ -67,6 +67,10 @@ Full Xcode (for `swift`, `notarytool`, `stapler`), plus `gh` authenticated with 
 1. `swift build -c release`
 2. Assembles `build/WindowThing.app` from `packaging/Info.plist`, stamping
    `CFBundleShortVersionString` from `./VERSION` and `CFBundleVersion` from the commit count.
+   It also copies `packaging/WindowThing.sdef` into `Contents/Resources`. That file is the
+   AppleScript vocabulary, named by `OSAScriptingDefinition` in the Info.plist — without it the
+   app has no terminology and every command fails as "not handled", which looks like the
+   scripting support was never built rather than like a missing file.
 3. `codesign --options runtime --timestamp` — hardened runtime and secure timestamp, both
    required for notarization. Everything links statically, so there are no nested binaries and
    no need for `--deep`.
