@@ -10,23 +10,19 @@ launch_with_surface || return 0
 setup_chooser_pane "Keyboard Scratch" || return 0
 
 drive type "Search apps and windows" "zzz"
-sleep 2
 
 expect_value "Search apps and windows" "zzz" "letters typed into search land as text"
 expect_control "New layout" "the surface stays open — 'z' was not read as a shortcut"
 
 info "Keyboard: escape gives up the field before the surface"
 $AX key escape >/dev/null 2>&1
-sleep 2
 expect_control "New layout" "the first escape leaves the search field, not the surface"
 
 info "Keyboard: escape cancels a rename rather than closing the surface"
 $AX press "New layout" >/dev/null 2>&1
-sleep 2
 expect_control "Layout name" "adding a layout opens its rename field"
 
 $AX key escape >/dev/null 2>&1
-sleep 2
 expect_no_control "Layout name" "escape closes the rename field"
 expect_control "New layout"     "the surface survives cancelling a rename"
 
@@ -36,7 +32,6 @@ $AX press "Delete layout " >/dev/null 2>&1
 if $AX wait "Delete Layout" 5 >/dev/null 2>&1; then
     pass "the unnamed layout still asks before deleting"
     $AX key escape >/dev/null 2>&1
-    sleep 2
     expect_no_control "Delete Layout" "escape dismisses the confirmation"
     expect_control "New layout"       "the surface survives cancelling a delete"
 else

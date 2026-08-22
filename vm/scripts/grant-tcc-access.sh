@@ -7,10 +7,11 @@
 # Usage:
 #   grant-tcc-access.sh <project-dir>
 #
-# The script grants access to three clients:
+# The script grants access to four clients:
 #   1. /usr/bin/swift          — covers `swift test` invocations from shell
 #   2. The compiled XCTest bundle — covers direct test binary execution
 #   3. Terminal.app            — covers interactive SSH sessions
+#   4. build/ax-driver         — the compiled interface driver
 #
 # auth_value 2 = allowed, auth_reason 4 = user-set, client_type 1 = absolute path,
 # client_type 0 = bundle ID.
@@ -48,14 +49,26 @@ if [ -f "$TCC_DB_USER" ]; then
     tcc_insert "$TCC_DB_USER" "com.apple.Terminal"           0
     tcc_insert "$TCC_DB_USER" "com.googlecode.iterm2"        0
 
-    # Automation: sending Apple events to WindowThing, which the interface tests
-    # use for the model-level verbs. A different service from Accessibility, and
-    # it is keyed on the pair — sender *and* target — hence the extra columns.
-    sqlite3 "$TCC_DB_USER" \
-        "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \
-         VALUES('kTCCServiceAppleEvents','/usr/bin/osascript',1,2,4,1,NULL,NULL,0,'com.windowthing.app',NULL,0,$TIMESTAMP);" \
-        2>/dev/null && echo "  [ok] osascript -> com.windowthing.app (automation)" \
-                    || echo "  [skip] automation grant (rename test will be skipped)"
+    # Automation: sending Apple events, which the interface tests use for the
+    # model-level verbs and for driving the menubar through System Events. A
+    # different service from Accessibility, and keyed on the pair — sender *and*
+    # target — hence the extra columns.
+    #
+    # Granted for two senders, because TCC blames the *responsible* process
+    # rather than the one that literally sends the event. Over SSH that is
+    # sshd-keygen-wrapper, so granting only osascript leaves the real client
+    # denied — and the failure is silent: osascript returns -1743 and the test
+    # quietly takes whatever fallback it has, appearing to pass.
+    echo "Automation (Apple events):"
+    for TARGET in com.windowthing.app com.apple.systemevents com.apple.TextEdit; do
+        for SENDER in /usr/bin/osascript /usr/libexec/sshd-keygen-wrapper; do
+            sqlite3 "$TCC_DB_USER" \
+                "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \
+                 VALUES('kTCCServiceAppleEvents','$SENDER',1,2,4,1,NULL,NULL,0,'$TARGET',NULL,0,$TIMESTAMP);" \
+                2>/dev/null && echo "  [ok] $SENDER -> $TARGET" \
+                            || echo "  [skip] $SENDER -> $TARGET"
+        done
+    done
 else
     echo "  [warn] User TCC.db not found — skipping user-level grants"
 fi
@@ -86,6 +99,20 @@ for TARGET in WindowThingTests WindowThingViewModelTests WindowThingCanvasTests;
          VALUES('$SERVICE','$EXPECTED_BIN',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$TIMESTAMP);" \
         2>/dev/null && echo "  [ok] $EXPECTED_BIN" || true
 done
+
+# The interface driver, compiled rather than run through `swift` so each of the
+# suite's hundred-plus calls costs 0.03s instead of 0.6s. It is a separate client
+# from /usr/bin/swift and needs its own grant; ui-lib.sh builds it at this exact
+# path so the grant can be written before it exists.
+echo "Interface driver:"
+AX_DRIVER="$PROJECT_DIR/build/ax-driver"
+if [ -f "$TCC_DB_USER" ]; then
+    tcc_insert "$TCC_DB_USER" "$AX_DRIVER" 1
+fi
+sudo sqlite3 "$TCC_DB_SYSTEM" \
+    "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \
+     VALUES('$SERVICE','$AX_DRIVER',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$TIMESTAMP);" \
+    2>/dev/null && echo "  [ok] $AX_DRIVER (system)" || true
 
 # Also grant any already-compiled bundles (covers re-runs)
 while IFS= read -r -d '' TEST_BUNDLE; do

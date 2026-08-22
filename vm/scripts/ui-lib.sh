@@ -8,11 +8,27 @@
 PROJECT_DIR="${PROJECT_DIR:-$HOME/Projects/window_thing}"
 APP="$PROJECT_DIR/build/WindowThing.app"
 
-# Run as a script through /usr/bin/swift, not compiled first. Accessibility is
-# granted to /usr/bin/swift by path, so a compiled copy would be a different
-# client with no permission — and every query would come back empty, which reads
-# as "the control isn't there" rather than "I wasn't allowed to look".
-AX="swift $PROJECT_DIR/vm/scripts/ax-driver.swift"
+# Compiled once, then run as a binary.
+#
+# Running it as `swift ax-driver.swift` re-compiles the script on every single
+# invocation — 0.6s a call against 0.03s for the compiled binary, and the suite
+# makes over a hundred calls. TCC grants are rows keyed on an absolute path, so
+# the compiled binary is granted the same way `/usr/bin/swift` is; the path below
+# is fixed precisely so grant-tcc-access.sh can authorise it ahead of time.
+AX="$PROJECT_DIR/build/ax-driver"
+AX_SOURCE="$PROJECT_DIR/vm/scripts/ax-driver.swift"
+
+# Rebuilds only when the source is newer, so repeat runs skip the compile.
+build_driver() {
+    if [ -x "$AX" ] && [ "$AX" -nt "$AX_SOURCE" ]; then return 0; fi
+    mkdir -p "$(dirname "$AX")"
+    if ! swiftc -O "$AX_SOURCE" -o "$AX" 2>/tmp/ax-driver-build.log; then
+        echo "could not build the driver:"
+        cat /tmp/ax-driver-build.log
+        return 1
+    fi
+    return 0
+}
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; DIM='\033[2m'; NC='\033[0m'
 
@@ -50,16 +66,35 @@ drive() {
     return 0
 }
 
+# Like expect_control, these retry rather than checking once.
+#
+# A single check has to be preceded by a sleep long enough for the interface to
+# have caught up, and that sleep is paid in full on every run whether it was
+# needed or not. Retrying costs only as long as the interface actually takes.
+ASSERT_TIMEOUT="${ASSERT_TIMEOUT:-8}"
+
 expect_value() {
-    local actual
-    actual="$($AX value "$1" 2>/dev/null)"
-    if [ "$actual" = "$2" ]; then pass "$3"; else fail "$3 (expected '$2', got '$actual')"; fi
+    local actual deadline
+    deadline=$((SECONDS + ASSERT_TIMEOUT))
+    while :; do
+        actual="$($AX value "$1" 2>/dev/null)"
+        if [ "$actual" = "$2" ]; then pass "$3"; return 0; fi
+        [ "$SECONDS" -ge "$deadline" ] && break
+        sleep 0.2
+    done
+    fail "$3 (expected '$2', got '$actual')"
 }
 
 expect_count() {
-    local actual
-    actual="$($AX count "$1" 2>/dev/null)"
-    if [ "$actual" = "$2" ]; then pass "$3"; else fail "$3 (expected $2, got $actual)"; fi
+    local actual deadline
+    deadline=$((SECONDS + ASSERT_TIMEOUT))
+    while :; do
+        actual="$($AX count "$1" 2>/dev/null)"
+        if [ "$actual" = "$2" ]; then pass "$3"; return 0; fi
+        [ "$SECONDS" -ge "$deadline" ] && break
+        sleep 0.2
+    done
+    fail "$3 (expected $2, got $actual)"
 }
 
 expect_equal() {
@@ -83,15 +118,46 @@ quit_app() {
 
 # Launch with the layout surface already open and pinned.
 #
+# Starts the app, retrying if LaunchServices refuses.
+#
 # Through `open`, not by running the executable: launching it directly leaves
 # LaunchServices unaware this process handles com.windowthing.app, and Apple
 # events sent to it time out — which looks like missing Automation consent.
+#
+# The retry is for the other side of that same bookkeeping. For a short window
+# after the process exits, LaunchServices still believes it is running and
+# rejects `open` outright with -600, so nothing starts at all. Waiting for pgrep
+# to clear is not enough — LaunchServices lets go a moment later than the kernel
+# does — and the resulting failure lands much later, as a surface that never
+# appeared.
+open_app() {
+    local attempt
+    for attempt in 1 2 3; do
+        if open -a "$APP" "$@" 2>/tmp/ui-open.log; then
+            return 0
+        fi
+        note "open refused the app (attempt $attempt): $(tr -d '\n' </tmp/ui-open.log)"
+        sleep 1
+    done
+    return 1
+}
+
 launch_with_surface() {
     quit_app
     # No -n: the previous instance is gone, and forcing a second one is what
     # produced two processes for the driver to choose between.
-    open -a "$APP" --args --screenshot space
-    sleep 8
+    if ! open_app --args --screenshot space; then
+        fail "the app could not be launched"
+        return 1
+    fi
+
+    # Waits for the surface itself rather than sleeping a fixed span. Launch
+    # time varies with what else the VM is doing, so any constant is either
+    # slower than it needs to be or occasionally too short.
+    if ! $AX wait "New layout" 25 >/dev/null 2>&1; then
+        fail "the surface did not open within 25s"
+        return 1
+    fi
 
     local running
     running="$(pgrep -x WindowThing | wc -l | tr -d ' ')"
@@ -102,10 +168,31 @@ launch_with_surface() {
 }
 
 # Launch without opening anything, for tests about opening it.
+#
+# Cannot wait on a named control the way launch_with_surface does: what appears
+# is the point of those tests — onboarding on a first run, nothing at all
+# otherwise. So it waits for the process to start answering Accessibility
+# queries at all, and lets the assertions poll for whatever should follow.
 launch_plain() {
     quit_app
-    open -a "$APP"
-    sleep 6
+    if ! open_app; then
+        fail "the app could not be launched"
+        return 1
+    fi
+    wait_for_app_ready
+}
+
+wait_for_app_ready() {
+    local deadline
+    deadline=$((SECONDS + 25))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if pgrep -x WindowThing >/dev/null 2>&1 \
+           && [ "$($AX list 2>/dev/null | head -1)" != "controls: 0" ]; then
+            return 0
+        fi
+        sleep 0.3
+    done
+    return 1
 }
 
 # Reopen the surface *without restarting the app*.
@@ -133,7 +220,10 @@ tell application "System Events"
   end tell
 end tell
 OSA
-    sleep 3
+    if ! $AX wait "New layout" 10 >/dev/null 2>&1; then
+        fail "the surface did not reopen via the menubar"
+        return 1
+    fi
 
     local pid_after
     pid_after="$(pgrep -x WindowThing)"
@@ -154,15 +244,14 @@ setup_chooser_pane() {
     local name="${1:-Chooser Scratch}"
 
     $AX press "New layout" >/dev/null 2>&1
-    sleep 2
+    $AX wait "Layout name" 10 >/dev/null 2>&1
     drive type "Layout name" "$name" || return 1
     drive confirm || return 1
-    sleep 2
+    $AX wait "Delete layout $name" 10 >/dev/null 2>&1
 
     $AX press "Split into columns — pane 1" >/dev/null 2>&1
-    sleep 2
 
-    if ! $AX wait "Search apps and windows" 5 >/dev/null 2>&1; then
+    if ! $AX wait "Search apps and windows" 10 >/dev/null 2>&1; then
         # Distinguish the two ways this goes wrong. If the surface has gone
         # entirely, a keystroke was taken as a command — space closes it — which
         # is a different fault from a pane simply not showing a chooser.
@@ -181,7 +270,14 @@ teardown_scratch_layout() {
     $AX press "Delete layout $name" >/dev/null 2>&1
     $AX wait "Delete Layout" 4 >/dev/null 2>&1
     $AX press "Delete Layout" >/dev/null 2>&1
-    sleep 2
+
+    # Reported but never fatal. This is cleanup, not an assertion — and because
+    # each test file is sourced, letting the last command's status escape makes
+    # a tidy-up hiccup look like the test itself failed.
+    if ! $AX gone "Delete layout $name" 8 >/dev/null 2>&1; then
+        note "scratch layout '$name' outlived its teardown"
+    fi
+    return 0
 }
 
 # A config of our own, so tests neither depend on nor disturb whatever layouts

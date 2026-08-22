@@ -18,20 +18,17 @@ setup_chooser_pane "Focus Scratch" || return 0
 expect_control "Search apps and windows" "a search field is on screen alongside the rename"
 
 $AX press "New layout" >/dev/null 2>&1
-sleep 2
 expect_control "Layout name" "adding a layout opens its rename field"
 
 # A name with a space in it. Space is the keystroke that closes the surface when
 # the app thinks no text field has focus, so it is the one that matters.
 SPACED="Two Words"
 drive type "Layout name" "$SPACED"
-sleep 2
 
 expect_control "New layout" "the surface is still open while typing a name"
 expect_value "Layout name" "$SPACED" "the whole name, spaces included, went into the field"
 
 drive confirm
-sleep 2
 expect_control "Delete layout $SPACED" "the typed name reaches the layout"
 
 info "Rename focus: tidying up"

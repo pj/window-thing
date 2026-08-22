@@ -26,6 +26,9 @@ if ! "$PROJECT_DIR/scripts/package.sh" --no-sign >/tmp/ui-test-build.log 2>&1; t
     exit 1
 fi
 
+info "Building the driver"
+build_driver || exit 1
+
 isolate_config
 trap 'quit_app; restore_config' EXIT
 

@@ -15,8 +15,7 @@ info "Surface: reopening"
 # Reopened rather than relaunched: the window is retained between showings, so
 # this is where state left over from last time would show up.
 osascript -e 'tell application "WindowThing" to show layout surface with pinned' >/dev/null 2>&1
-sleep 2
-if $AX exists "New layout" >/dev/null 2>&1; then
+if $AX wait "New layout" 8 >/dev/null 2>&1; then
     pass "the surface can be reopened"
 else
     # Scripting needs Automation consent; not having it is not a surface bug.

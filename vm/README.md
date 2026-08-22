@@ -156,17 +156,30 @@ and the model, so a test that calls the model proves nothing about it.
 
 Through the Accessibility API, not System Events, which could not see the layout
 surface reliably: the window sits at the screen-saver level and came and went
-between calls. The VM already grants `/usr/bin/swift` Accessibility, so a script
-run that way needs no further approval — which is why `ax-driver.swift` is run as
-a script and never compiled to a binary, since a compiled copy would be a
-different client with no permission.
+between calls.
+
+The driver is compiled once to `build/ax-driver` and run as a binary. It used to
+be run as `swift ax-driver.swift` on the theory that only `/usr/bin/swift` held
+the Accessibility grant, so a compiled copy would be a different client with no
+permission. That was wrong: TCC grants are rows keyed on an absolute path, and
+`grant-tcc-access.sh` authorises the driver's path the same way it authorises
+`/usr/bin/swift`. Running it as a script re-compiled it on every call — 0.6s
+against 0.03s, across more than a hundred calls a run.
 
 Three things that took some finding, recorded so they don't have to be found
 again:
 
 - The app is launched with `open`, not by running its executable. Launching it
   directly leaves LaunchServices unaware it handles `com.windowthing.app`, and
-  Apple events time out — which reads as missing Automation consent.
+  Apple events time out — which reads as missing Automation consent. `open` is
+  also retried: for a moment after the app quits LaunchServices still thinks it
+  is running and refuses with `-600`, starting nothing at all.
+- Automation consent is checked against the *responsible* process, not the one
+  that sends the event. Over SSH that is `sshd-keygen-wrapper`, so granting only
+  `/usr/bin/osascript` leaves the real client denied — and it fails silently,
+  with the test taking whatever fallback it has and appearing to pass.
+- The assertions poll rather than sleeping. A fixed sleep is paid on every run
+  whether it was needed or not, and is still occasionally too short.
 - Setting a SwiftUI text field's accessibility *value* does not write through to
   its binding. The driver types real keystrokes, and focuses the field first:
   the surface deliberately does not reclaim key focus, so its field can be on

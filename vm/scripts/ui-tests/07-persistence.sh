@@ -15,11 +15,25 @@ CONFIG="$HOME/Library/Application Support/WindowThing/config.yaml"
 config_layout_count() { grep -c '^  name:' "$CONFIG" 2>/dev/null || echo 0; }
 config_has_layout()   { grep -q "^  name: $1\$" "$CONFIG" 2>/dev/null; }
 
+# Both poll: the write to config.yaml happens off the back of the edit rather
+# than synchronously with it, so checking once means sleeping first and hoping.
 expect_in_config() {
-    if config_has_layout "$1"; then pass "$2"; else fail "$2 (not in config.yaml)"; fi
+    local deadline=$((SECONDS + ASSERT_TIMEOUT))
+    while :; do
+        if config_has_layout "$1"; then pass "$2"; return 0; fi
+        [ "$SECONDS" -ge "$deadline" ] && break
+        sleep 0.2
+    done
+    fail "$2 (not in config.yaml)"
 }
 expect_not_in_config() {
-    if config_has_layout "$1"; then fail "$2 (still in config.yaml)"; else pass "$2"; fi
+    local deadline=$((SECONDS + ASSERT_TIMEOUT))
+    while :; do
+        if ! config_has_layout "$1"; then pass "$2"; return 0; fi
+        [ "$SECONDS" -ge "$deadline" ] && break
+        sleep 0.2
+    done
+    fail "$2 (still in config.yaml)"
 }
 
 info "Persistence: adding a layout"
@@ -30,10 +44,9 @@ before_count="$(config_layout_count)"
 note "config.yaml holds $before_count layouts"
 
 $AX press "New layout" >/dev/null 2>&1
-sleep 2
+$AX wait "Layout name" 10 >/dev/null 2>&1
 drive type "Layout name" "$STICKY"
 drive confirm
-sleep 3
 
 expect_control  "Delete layout $STICKY" "the layout appears in the surface"
 expect_in_config "$STICKY"              "the name reaches config.yaml"
@@ -49,7 +62,7 @@ info "Persistence: it survives reopening the surface"
 # Reopened in the same process on purpose: relaunching would reload the file and
 # paper over precisely the fault being tested.
 $AX press "Close layout surface" >/dev/null 2>&1
-sleep 2
+$AX gone "New layout" 8 >/dev/null 2>&1
 reopen_surface_in_process || return 0
 
 expect_control   "Delete layout $STICKY" "the layout is still in the surface after reopening"
@@ -61,10 +74,9 @@ info "Persistence: renaming it again also sticks"
 # the one that opens automatically when a layout is created.
 RENAMED="Renamed Sticky"
 $AX press "New layout" >/dev/null 2>&1
-sleep 2
+$AX wait "Layout name" 10 >/dev/null 2>&1
 drive type "Layout name" "$RENAMED"
 drive confirm
-sleep 3
 
 expect_in_config "$RENAMED" "a second layout's name reaches config.yaml"
 expect_in_config "$STICKY"  "the first layout is still in the file"
@@ -73,7 +85,6 @@ info "Persistence: deleting reaches the file too"
 $AX press "Delete layout $RENAMED" >/dev/null 2>&1
 $AX wait "Delete Layout" 4 >/dev/null 2>&1
 $AX press "Delete Layout" >/dev/null 2>&1
-sleep 3
 
 expect_not_in_config "$RENAMED" "the deleted layout leaves config.yaml"
 expect_in_config     "$STICKY"  "deleting one layout does not take the others"

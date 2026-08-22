@@ -22,7 +22,6 @@ fi
 
 info "Onboarding: stepping through it"
 $AX press "Get Started" >/dev/null 2>&1
-sleep 2
 expect_control "Accessibility Access" "the second step covers the required permission"
 
 info "Onboarding: tidying up"
