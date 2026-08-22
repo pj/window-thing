@@ -38,11 +38,11 @@
         # each on their own line as a simple `name = "value";` pair.
         packages.default = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
           pname = "window-thing";
-          version = "0.5.3";
+          version = "0.5.4";
 
           src = pkgs.fetchurl {
             url = "https://github.com/pj/window-thing/releases/download/v${finalAttrs.version}/WindowThing.zip";
-            hash = "sha256-BJ7POhNWVvRTazU7JQhn10DZYm2reh8B9CFEs0Yp/50=";
+            hash = "sha256-aQmw2URbTWHsHGqHgbVjiUQrKn0Svaweqmu//mOuluk=";
           };
 
           nativeBuildInputs = [ pkgs.unzip ];
