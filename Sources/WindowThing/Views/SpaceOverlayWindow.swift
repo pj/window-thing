@@ -178,7 +178,7 @@ final class SpaceOverlayWindow: NSWindow {
 
         if viewModel.isTextFieldFocused, viewModel.renamingLayoutId == nil {
             // Searching: give focus back before the surface starts closing.
-            viewModel.isTextFieldFocused = false
+            viewModel.isSearchFieldFocused = false
             makeFirstResponder(nil)
             return
         }
@@ -628,7 +628,7 @@ struct SpaceOverlayView: View {
                     onChoose: { choose($0, on: slot) },
                     onChooseApp: { chooseApp($0, on: slot) },
                     onChooseEmpty: { setType(slot, to: .empty) },
-                    onTextFocusChanged: { viewModel.isTextFieldFocused = $0 },
+                    onTextFocusChanged: { viewModel.isSearchFieldFocused = $0 },
                     sessionID: viewModel.presentationCount,
                     onSetType: { setType(slot, to: $0) },
                     onSplit: { split(slot, axis: $0) },
@@ -2153,11 +2153,7 @@ private struct LayoutPill: View {
                     .focused($nameFocused)
                     .onSubmit { viewModel.commitRename() }
                     .onExitCommand { viewModel.cancelRename() }
-                    .onAppear {
-                        nameFocused = true
-                        viewModel.isTextFieldFocused = true
-                    }
-                    .onDisappear { viewModel.isTextFieldFocused = false }
+                    .onAppear { nameFocused = true }
                     // Unlabelled, this field was invisible to VoiceOver and to
                     // anything driving the interface — a text box with no name.
                     .accessibilityLabel("Layout name")

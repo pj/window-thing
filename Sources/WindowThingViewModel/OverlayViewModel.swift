@@ -54,10 +54,26 @@ public class OverlayViewModel: ObservableObject {
     /// showings, so SwiftUI state would otherwise survive from last time.
     @Published public var presentationCount: Int = 0
 
-    /// True while a text field inside the surface holds focus. The overlay
+    /// True while the chooser's search field holds focus.
+    ///
+    /// Only the search field writes this. It used to share one flag with the
+    /// rename field, and since every non-stack pane draws a chooser, several
+    /// views wrote it — so a search field reporting that it had *lost* focus
+    /// cleared the flag while the rename field still had it. The next keystroke
+    /// was then read as a command, and space closes the surface: typing a
+    /// layout's name dismissed the window being typed in.
+    @Published public var isSearchFieldFocused: Bool = false
+
+    /// True while any text field inside the surface holds focus. The overlay
     /// window intercepts plain keystrokes as commands — a bare letter is a cell
     /// address — so it has to stand down while those keystrokes are text.
-    @Published public var isTextFieldFocused: Bool = false
+    ///
+    /// Derived rather than assigned. A rename *is* a focused text field, so it
+    /// is read from the rename state directly instead of from a matching pair
+    /// of appear/disappear events that can arrive in either order.
+    public var isTextFieldFocused: Bool {
+        renamingLayoutId != nil || isSearchFieldFocused
+    }
 
     /// True while a confirmation is on screen. The window has to stand down for
     /// the same reason as above, and for one more: Esc peels a layer off the

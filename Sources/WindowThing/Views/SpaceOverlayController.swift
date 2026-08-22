@@ -69,7 +69,7 @@ final class SpaceOverlayController {
     func hide() {
         viewModel.hideAppSelector()
         viewModel.hideCellPicker()
-        viewModel.isTextFieldFocused = false
+        viewModel.isSearchFieldFocused = false
         windows.forEach { $0.hide() }
     }
 

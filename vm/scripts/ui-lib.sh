@@ -163,7 +163,14 @@ setup_chooser_pane() {
     sleep 2
 
     if ! $AX wait "Search apps and windows" 5 >/dev/null 2>&1; then
-        fail "could not get a pane showing the chooser"
+        # Distinguish the two ways this goes wrong. If the surface has gone
+        # entirely, a keystroke was taken as a command — space closes it — which
+        # is a different fault from a pane simply not showing a chooser.
+        if $AX exists "New layout" >/dev/null 2>&1; then
+            fail "the pane is not showing a chooser"
+        else
+            fail "the surface closed while setting up — a keystroke was read as a command"
+        fi
         return 1
     fi
     return 0

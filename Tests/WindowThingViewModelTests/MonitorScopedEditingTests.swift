@@ -542,3 +542,67 @@ struct LayoutListSyncTests {
         #expect(vm.layouts.map(\.name) == ["After"])
     }
 }
+
+/// The surface reads bare keystrokes as commands — a letter is a cell address,
+/// space closes it — so it has to stand down wherever text is being typed.
+/// Getting that wrong means typing a name closes the window you were typing in.
+@Suite("Text focus")
+struct TextFocusTests {
+
+    @Test("A rename holds the keyboard even when a search field reports losing focus")
+    func renameSurvivesSearchLosingFocus() {
+        // The reported bug. Both the rename field and every chooser pane's
+        // search field used to write one shared flag, so the search field
+        // saying "not focused" — which happens the moment a rename takes focus
+        // away from it — cleared it while the rename field was still active.
+        // The next keystroke was then read as a command, and space closes the
+        // surface.
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+
+        vm.beginRename(vm.layouts[0])
+        #expect(vm.isTextFieldFocused, "a rename should hold the keyboard")
+
+        vm.isSearchFieldFocused = false
+        #expect(vm.isTextFieldFocused,
+                "the search field losing focus stole the keyboard from the rename")
+    }
+
+    @Test("Search holds the keyboard when nothing is being renamed")
+    func searchHoldsKeyboard() {
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+
+        #expect(!vm.isTextFieldFocused)
+        vm.isSearchFieldFocused = true
+        #expect(vm.isTextFieldFocused)
+        vm.isSearchFieldFocused = false
+        #expect(!vm.isTextFieldFocused)
+    }
+
+    @Test("Ending a rename gives the keyboard back")
+    func endingRenameReleasesKeyboard() {
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+
+        vm.beginRename(vm.layouts[0])
+        vm.renameDraft = "Two"
+        vm.commitRename()
+        #expect(!vm.isTextFieldFocused, "the surface should take the keyboard back")
+
+        vm.beginRename(vm.layouts[0])
+        vm.cancelRename()
+        #expect(!vm.isTextFieldFocused, "cancelling should release it too")
+    }
+
+    @Test("One pane's search losing focus doesn't speak for another's")
+    func oneChooserDoesNotSpeakForAnother() {
+        // Several panes each draw a chooser, so several of them write this. A
+        // pane that never had focus reporting false must not silence a pane
+        // that does.
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+
+        vm.isSearchFieldFocused = true
+        vm.beginRename(vm.layouts[0])
+        vm.isSearchFieldFocused = false
+
+        #expect(vm.isTextFieldFocused, "the rename still needs the keyboard")
+    }
+}
