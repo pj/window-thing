@@ -38,7 +38,7 @@ struct WindowThingApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// The live delegate.
     ///
@@ -182,11 +182,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        updateStatusMenu()
+        // Rebuilt every time it opens rather than assembled once at launch.
+        // Layouts are added, renamed and deleted from the layout surface, and a
+        // menu built ahead of all that lists layouts that no longer exist while
+        // missing the ones that do.
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem?.menu = menu
+        rebuildStatusMenu(menu)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rebuildStatusMenu(menu)
     }
 
     private func updateStatusMenu() {
-        let menu = NSMenu()
+        guard let menu = statusItem?.menu else { return }
+        rebuildStatusMenu(menu)
+    }
+
+    private func rebuildStatusMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
 
         // Get current displays for generating layout icons
         let displays = windowManager.getDisplays()
@@ -216,6 +232,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let spaceItem = NSMenuItem(title: "Show Layout", action: #selector(showSpaceFromMenu), keyEquivalent: "")
         spaceItem.target = self
+        // The configured activation shortcut, shown the way the rest of the menu
+        // shows its shortcuts. Read from the config rather than written out, so
+        // it cannot drift from the hotkey actually registered.
+        if let shortcut = menuShortcut(for: configManager.config.activationHotKey) {
+            spaceItem.keyEquivalent = shortcut.equivalent
+            spaceItem.keyEquivalentModifierMask = shortcut.modifiers
+        }
         menu.addItem(spaceItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -246,16 +269,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Quit
         menu.addItem(NSMenuItem(title: "Quit WindowThing", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        statusItem?.menu = menu
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent!
 
         if event.type == .rightMouseUp {
-            statusItem?.menu = nil
-            updateStatusMenu()
+            // The menu stays attached: it rebuilds itself from menuNeedsUpdate
+            // as it opens, so there is nothing to reassemble first. Detaching it
+            // here used to be how it was refreshed, and would now leave the
+            // status item with no menu at all.
             statusItem?.button?.performClick(nil)
         } else {
             // Left click → the activation surface
@@ -396,6 +419,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showCellPicker() {
         // The picker lives inside the activation surface, so raise that first.
         spaceOverlay.showCellPickerForFocusedWindow()
+    }
+
+    /// A hotkey from the config expressed as a menu item's shortcut.
+    ///
+    /// `NSMenuItem` draws a `keyEquivalent` plus its modifier mask itself, in
+    /// the menu's own shortcut column — so this renders identically to the
+    /// system's own items rather than being spelled out in the title.
+    ///
+    /// Returns nil for a key with no menu representation, in which case the item
+    /// simply carries no shortcut. Better a menu item without a shortcut than
+    /// one advertising a chord that does nothing.
+    private func menuShortcut(
+        for config: HotKeyConfig
+    ) -> (equivalent: String, modifiers: NSEvent.ModifierFlags)? {
+        guard let key = Key(carbonKeyCode: config.keyCode) else { return nil }
+
+        // Carbon key codes carry no character, and the keys below have no
+        // printable form at all — AppKit spells them with the constants in
+        // NSText's function-key range.
+        func functionKey(_ code: Int) -> String {
+            UnicodeScalar(code).map { String(Character($0)) } ?? ""
+        }
+
+        let special: [Key: String] = [
+            .space: " ",
+            .return: "\r",
+            .tab: "\t",
+            .escape: "\u{1b}",
+            .delete: "\u{8}",
+            .forwardDelete: functionKey(NSDeleteFunctionKey),
+            .upArrow: functionKey(NSUpArrowFunctionKey),
+            .downArrow: functionKey(NSDownArrowFunctionKey),
+            .leftArrow: functionKey(NSLeftArrowFunctionKey),
+            .rightArrow: functionKey(NSRightArrowFunctionKey),
+            .home: functionKey(NSHomeFunctionKey),
+            .end: functionKey(NSEndFunctionKey),
+            .pageUp: functionKey(NSPageUpFunctionKey),
+            .pageDown: functionKey(NSPageDownFunctionKey),
+        ]
+
+        let equivalent: String
+        if let named = special[key] {
+            equivalent = named
+        } else {
+            // Everything else — letters, digits, punctuation — describes itself
+            // as the character it types. Anything longer is a key this does not
+            // know how to draw.
+            let described = String(describing: key).lowercased()
+            guard described.count == 1 else { return nil }
+            equivalent = described
+        }
+
+        return (equivalent, modifierFlags(from: config.modifiers))
     }
 
     private func modifierFlags(from strings: [String]) -> NSEvent.ModifierFlags {

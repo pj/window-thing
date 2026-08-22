@@ -152,8 +152,12 @@ extension NSImage {
                 return true
             }
 
-            // Inner area for drawing splits
-            let innerRect = screenRect.insetBy(dx: 2.0, dy: 2.0)
+            // The splits are drawn right up to the inside of the bezel, so a
+            // divider meets the monitor's edge the way a real one does. Inset by
+            // half the bezel's line width and no more: the stroke straddles
+            // screenRect, so its inner face sits half a point inside.
+            let innerRect = screenRect.insetBy(dx: bezelPath.lineWidth / 2,
+                                               dy: bezelPath.lineWidth / 2)
 
             // Draw the layout structure
             drawLayoutNode(primaryLayout, in: innerRect)
@@ -203,8 +207,10 @@ extension NSImage {
             }
 
             if width > 2 {
+                // Not inset: a nested split has to reach this column's own edges
+                // for its dividers to meet the ones around it.
                 let columnRect = NSRect(x: x, y: rect.minY, width: width, height: rect.height)
-                drawLayoutNode(child, in: columnRect.insetBy(dx: 0.5, dy: 0))
+                drawLayoutNode(child, in: columnRect)
             }
 
             x += width
@@ -232,8 +238,9 @@ extension NSImage {
             }
 
             if height > 2 {
+                // Not inset, for the same reason as the columns above.
                 let rowRect = NSRect(x: rect.minX, y: y - height, width: rect.width, height: height)
-                drawLayoutNode(child, in: rowRect.insetBy(dx: 0, dy: 0.5))
+                drawLayoutNode(child, in: rowRect)
             }
 
             y -= height
