@@ -79,10 +79,10 @@ expect_menu_lacks() {
 
 info "Menubar: it lists the configured layouts"
 # Start from the app's own defaults, by deleting the file and letting it write
-# one. The menu lists only the first five layouts, so against a config that
-# already holds five an added layout has nowhere to appear and the assertions
-# below would pass without testing anything. The defaults are four, leaving room
-# for exactly the one this test adds.
+# one. The menu truncates past a cap, so against a config already at that many
+# an added layout has nowhere to appear and the assertions below would pass
+# without testing anything. The defaults are four, leaving room for the two this
+# test adds.
 #
 # Written by the app rather than by hand here: AppConfig has six non-optional
 # fields beyond the layouts, and a config missing any of them fails to decode —
@@ -101,22 +101,22 @@ $AX gone "New layout" 8 >/dev/null 2>&1
 
 expect_menu_has "Fullscreen"       "a configured layout is listed"
 expect_menu_has "Half Split"       "so is the second"
-expect_menu_has "Show Layout"      "the menu offers the layout surface"
+expect_menu_has "Layout Editor"    "the menu offers the layout surface"
 expect_menu_has "Quit WindowThing" "the menu is fully populated"
 
-info "Menubar: Show Layout carries the activation shortcut"
+info "Menubar: Layout Editor carries the activation shortcut"
 # The shortcut is read from the configured hotkey rather than written into the
 # title, so the two cannot drift apart. Asserted against config.yaml for that
 # reason — hard-coding ⌃⌥W here would pass even if the item stopped following
 # the config.
 config_key_code="$(awk '/^activationHotKey:/{f=1;next} f&&/keyCode:/{print $2;exit}' "$CONFIG" 2>/dev/null)"
-shortcut="$(menu_shortcut_of "Show Layout")"
+shortcut="$(menu_shortcut_of "Layout Editor")"
 note "activationHotKey keyCode=${config_key_code:-?}, menu shows ${shortcut}"
 
 if [ "${shortcut%%/*}" != "none" ] && [ -n "${shortcut%%/*}" ]; then
-    pass "Show Layout has a keyboard shortcut against it"
+    pass "Layout Editor has a keyboard shortcut against it"
 else
-    fail "Show Layout has no shortcut (was '$shortcut')"
+    fail "Layout Editor has no shortcut (was '$shortcut')"
 fi
 
 # keyCode 13 is W, the default. Only checked when the config actually says so,
@@ -146,11 +146,32 @@ $AX gone "New layout" 8 >/dev/null 2>&1
 
 expect_menu_has "$SCRATCH" "a layout added from the surface reaches the menu"
 
+info "Menubar: it lists more than five layouts"
+# Four defaults plus these two makes six. The menu used to stop at five, so a
+# sixth layout could never appear however the list changed — which reads as the
+# menu refusing to update rather than as a cap, and is exactly how it was
+# reported.
+reopen_surface_in_process || return 0
+
+SIXTH="Menu Sixth"
+$AX press "New layout" >/dev/null 2>&1
+$AX wait "Layout name" 10 >/dev/null 2>&1
+drive type "Layout name" "$SIXTH" || return 0
+drive confirm || return 0
+$AX wait "Delete layout $SIXTH" 10 >/dev/null 2>&1
+
+$AX press "Close layout surface" >/dev/null 2>&1
+$AX gone "New layout" 8 >/dev/null 2>&1
+
+expect_menu_has "$SCRATCH" "the fifth layout is still listed"
+expect_menu_has "$SIXTH"   "and so is the sixth, past the old five-item cap"
+
 info "Menubar: and a deletion"
 # Only means anything because the assertion above established the layout was in
 # the menu to begin with. On its own it passes against a menu that never listed
 # the layout at all — which is exactly what a stale menu looks like.
 reopen_surface_in_process || return 0
+teardown_scratch_layout "$SIXTH"
 teardown_scratch_layout "$SCRATCH"
 $AX press "Close layout surface" >/dev/null 2>&1
 $AX gone "New layout" 8 >/dev/null 2>&1

@@ -14,7 +14,7 @@ expect_no_control "New layout" "pressing close dismisses the surface"
 info "Surface: reopening"
 # Reopened rather than relaunched: the window is retained between showings, so
 # this is where state left over from last time would show up.
-osascript -e 'tell application "WindowThing" to show layout surface with pinned' >/dev/null 2>&1
+osascript -e 'tell application "WindowThing" to show layout editor with pinned' >/dev/null 2>&1
 if $AX wait "New layout" 8 >/dev/null 2>&1; then
     pass "the surface can be reopened"
 else

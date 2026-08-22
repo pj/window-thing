@@ -88,15 +88,15 @@ tell application "WindowThing"
     rename layout "Layout 6" to "Coding"
     delete layout "Coding"
 
-    show layout surface
-    hide layout surface
-    surface is open                       --> true
+    show layout editor
+    hide layout editor
+    layout editor is open                 --> true
 end tell
 ```
 
 `delete layout` deliberately bypasses the confirmation the interface shows — a
-script has already said what it wants. `show layout surface with pinned` keeps
-the surface up when the app loses focus, which is what screenshot and test
+script has already said what it wants. `show layout editor with pinned` keeps
+the editor up when the app loses focus, which is what screenshot and test
 tooling needs.
 
 ## Usage

@@ -13,7 +13,7 @@ struct SettingsView: View {
                 }
                 .tag(0)
 
-            // Layouts are listed, applied and edited in the Show Layout surface —
+            // Layouts are listed, applied and edited in the Layout Editor surface —
             // no second place to manage them.
 
             AboutView()

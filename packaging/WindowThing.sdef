@@ -5,8 +5,8 @@
   AppleScript terminology for WindowThing.
 
   These are model-level verbs: they do what the menubar menu does, without
-  going through the layout surface. That makes them good for scripting and for
-  driving the app in tests, and deliberately unsuitable for testing the surface
+  going through the layout editor. That makes them good for scripting and for
+  driving the app in tests, and deliberately unsuitable for testing the editor
   itself — `delete layout` here bypasses the confirmation the UI shows, because
   a script has already said what it wants.
 -->
@@ -56,8 +56,8 @@
             <result type="boolean" description="False if no layout has that name, or it is the last one."/>
         </command>
 
-        <command name="show layout surface" code="WThgshow"
-                 description="Open the layout surface.">
+        <command name="show layout editor" code="WThgshow"
+                 description="Open the layout editor.">
             <cocoa class="WTShowSurfaceCommand"/>
             <parameter name="pinned" code="pinn" type="boolean" optional="yes"
                        description="Keep it open when the app loses focus. Useful for screenshots and tests, which take focus away by their nature.">
@@ -65,13 +65,13 @@
             </parameter>
         </command>
 
-        <command name="hide layout surface" code="WThghide"
-                 description="Close the layout surface.">
+        <command name="hide layout editor" code="WThghide"
+                 description="Close the layout editor.">
             <cocoa class="WTHideSurfaceCommand"/>
         </command>
 
-        <command name="surface is open" code="WThgopen"
-                 description="Whether the layout surface is currently showing.">
+        <command name="layout editor is open" code="WThgopen"
+                 description="Whether the layout editor is currently showing.">
             <cocoa class="WTSurfaceIsOpenCommand"/>
             <result type="boolean"/>
         </command>

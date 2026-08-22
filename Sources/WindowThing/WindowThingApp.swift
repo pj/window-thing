@@ -201,14 +201,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildStatusMenu(menu)
     }
 
+    /// How many layouts the menubar lists before truncating.
+    private static let maxLayoutsInMenu = 15
+
     private func rebuildStatusMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
         // Get current displays for generating layout icons
         let displays = windowManager.getDisplays()
 
-        // Layouts at top level (limited to 5)
-        let layoutsToShow = Array(layoutManager.layouts.prefix(5))
+        // Layouts at top level. Capped because the menu shares the screen with
+        // every other status item's, but high enough that a layout you just
+        // added is actually in it — at five, a sixth layout could never appear,
+        // which reads as the menu having gone stale rather than as a limit.
+        let layoutsToShow = Array(layoutManager.layouts.prefix(Self.maxLayoutsInMenu))
 
         if layoutsToShow.isEmpty {
             let noLayoutsItem = NSMenuItem(title: "No layouts configured", action: nil, keyEquivalent: "")
@@ -230,7 +236,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let spaceItem = NSMenuItem(title: "Show Layout", action: #selector(showSpaceFromMenu), keyEquivalent: "")
+        let spaceItem = NSMenuItem(title: "Layout Editor", action: #selector(showSpaceFromMenu), keyEquivalent: "")
         spaceItem.target = self
         // The configured activation shortcut, shown the way the rest of the menu
         // shows its shortcuts. Read from the config rather than written out, so
@@ -495,8 +501,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         windowManager.onCacheRefresh = { [weak self] in
             guard let self else { return }
 
-            // Not while the layout surface is open. It is an editor, and this
-            // fires twice a second on the main thread: it would push every
+            // Not while the layout editor is open. Edits there are provisional,
+            // and this fires twice a second on the main thread: it would push every
             // half-dragged intermediate state out to real windows, and the AX
             // round trip to move them all stalls the drag it is reacting to,
             // which is what made resizing a pane move in visible steps.
