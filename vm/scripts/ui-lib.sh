@@ -108,6 +108,42 @@ launch_plain() {
     sleep 6
 }
 
+# Reopen the surface *without restarting the app*.
+#
+# This distinction is the whole point of the persistence tests. Relaunching
+# re-reads config.yaml from disk, so the app comes back correct no matter what
+# state it had in memory — which hides exactly the bug where the editor's list
+# and the layout manager's have drifted apart. Going through the menubar keeps
+# the same process, and the same in-memory state, alive.
+#
+# Driven with System Events because status items live in the system's menu bar
+# extras rather than the app's own Accessibility tree, so the driver cannot see
+# them. The global hotkey would be the other way in, but a synthesised chord
+# does not trigger a Carbon hotkey in the VM.
+reopen_surface_in_process() {
+    local pid_before
+    pid_before="$(pgrep -x WindowThing)"
+
+    osascript <<'OSA' >/dev/null 2>&1
+tell application "System Events"
+  tell process "WindowThing"
+    click menu bar item 1 of menu bar 2
+    delay 1
+    click menu item "Show Layout" of menu 1 of menu bar item 1 of menu bar 2
+  end tell
+end tell
+OSA
+    sleep 3
+
+    local pid_after
+    pid_after="$(pgrep -x WindowThing)"
+    if [ "$pid_before" != "$pid_after" ]; then
+        fail "the app restarted — this test needs the same process"
+        return 1
+    fi
+    return 0
+}
+
 # A layout with a pane that shows the window chooser.
 #
 # A fresh layout is a single stack, and the stack shows what has landed in it

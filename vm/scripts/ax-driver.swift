@@ -98,7 +98,7 @@ func control(labelled wanted: String) -> Control? {
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let command = arguments.first else {
-    fail("usage: ax-driver.swift <list|press|exists|value|count|set-text|type|key|confirm|wait|gone> [arguments]")
+    fail("usage: ax-driver.swift <list|press|exists|value|count|actions|do|set-text|type|key|hotkey|confirm|wait|gone> [arguments]")
 }
 
 switch command {
@@ -186,6 +186,61 @@ case "confirm":
     usleep(50_000)
     up?.post(tap: .cghidEventTap)
     print("pressed: return")
+
+case "hotkey":
+    // The global activation chord, Cmd+Shift+Space by default.
+    //
+    // This is the only way to reopen the surface *inside the same process*.
+    // Relaunching the app would reload config.yaml from disk, which hides
+    // exactly the class of bug where the editor's list and the layout manager's
+    // have drifted apart — the file is right, and the app forgets anyway.
+    // The modifier keys are pressed as their own events, not just declared as
+    // flags on the space keystroke. A Carbon global hotkey watches the real
+    // modifier state, and a synthetic key that merely claims to be modified
+    // does not trigger it.
+    let chordSource = CGEventSource(stateID: .hidSystemState)
+    let command: CGKeyCode = 0x37
+    let shift: CGKeyCode = 0x38
+    let space: CGKeyCode = 0x31
+
+    func post(_ key: CGKeyCode, down: Bool, flags: CGEventFlags) {
+        guard let event = CGEvent(
+            keyboardEventSource: chordSource, virtualKey: key, keyDown: down) else { return }
+        event.flags = flags
+        event.post(tap: .cghidEventTap)
+        usleep(40_000)
+    }
+
+    post(command, down: true, flags: .maskCommand)
+    post(shift, down: true, flags: [.maskCommand, .maskShift])
+    post(space, down: true, flags: [.maskCommand, .maskShift])
+    post(space, down: false, flags: [.maskCommand, .maskShift])
+    post(shift, down: false, flags: .maskCommand)
+    post(command, down: false, flags: [])
+    print("hotkey: command-shift-space")
+
+case "actions":
+    // What a control will actually respond to. AXPress is not the only one —
+    // a context menu is AXShowMenu — and guessing wastes a VM cycle.
+    guard arguments.count >= 2 else { fail("actions needs a label") }
+    guard let target = control(labelled: arguments[1]) else {
+        fail("no control labelled '\(arguments[1])'")
+    }
+    var names: CFArray?
+    AXUIElementCopyActionNames(target.element, &names)
+    print(((names as? [String]) ?? []).joined(separator: " "))
+
+case "do":
+    // Perform a named action, for the ones that are not a press.
+    guard arguments.count >= 3 else { fail("do needs a label and an action") }
+    guard let target = control(labelled: arguments[1]) else {
+        fail("no control labelled '\(arguments[1])'")
+    }
+    let result = AXUIElementPerformAction(target.element, arguments[2] as CFString)
+    guard result == .success else {
+        fail("'\(arguments[2])' on '\(arguments[1])' failed: \(result.rawValue)")
+    }
+    print("did: \(arguments[2]) on \(arguments[1])")
 
 case "key":
     // A named key, for the ones the interface treats as commands.

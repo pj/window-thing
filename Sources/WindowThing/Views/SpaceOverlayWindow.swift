@@ -2102,6 +2102,12 @@ private struct LayoutPill: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Layout \(layout.name)")
             .accessibilityIdentifier("layout.pill.\(layout.name)")
+            // Renaming is a double-click, and duplicating is in a context menu.
+            // Neither is reachable without a mouse, so both are offered as
+            // actions as well — which is also the only way anything can drive
+            // them from outside.
+            .accessibilityAction(named: "Rename") { beginRename() }
+            .accessibilityAction(named: "Duplicate") { viewModel.duplicateLayout(layout) }
             // Deleting writes the config straight away and there is no undo for
             // it, unlike edits to a layout's panes.
             .confirmationDialog(
