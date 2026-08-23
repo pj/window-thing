@@ -2062,6 +2062,38 @@ private struct LayoutSwitcherBar: View {
     }
 }
 
+/// Cursor feedback for a hover region.
+///
+/// `push()`/`pop()` is the usual pairing, but a layout chip can be deleted
+/// while the pointer is still over it, and then the pop never happens — the
+/// cursor stays changed for the rest of the session. Popping on disappear too
+/// keeps the stack balanced.
+private struct HoverCursor: ViewModifier {
+    let cursor: NSCursor
+    @State private var inside = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                guard hovering != inside else { return }
+                inside = hovering
+                if hovering { cursor.push() } else { NSCursor.pop() }
+            }
+            .onDisappear {
+                if inside {
+                    NSCursor.pop()
+                    inside = false
+                }
+            }
+    }
+}
+
+private extension View {
+    func hoverCursor(_ cursor: NSCursor) -> some View {
+        modifier(HoverCursor(cursor: cursor))
+    }
+}
+
 private struct LayoutPill: View {
     @ObservedObject var viewModel: OverlayViewModel
     let layout: WTLayout
@@ -2069,6 +2101,8 @@ private struct LayoutPill: View {
     let isActive: Bool
 
     @State private var deleteHovering = false
+    @State private var nameHovering = false
+    @State private var pillHovering = false
     @State private var confirmingDelete = false
     @FocusState private var nameFocused: Bool
 
@@ -2141,7 +2175,10 @@ private struct LayoutPill: View {
 
     private var pillBody: some View {
         HStack(spacing: 8) {
-            // Key first, then the name — the shortcut is what you scan for.
+            // Preview, then the shortcut, then the name — the same order the
+            // menubar uses, so the two read alike.
+            layoutPreview
+
             keyChip
 
             if isRenaming {
@@ -2162,21 +2199,75 @@ private struct LayoutPill: View {
                 Text(layout.name.isEmpty ? "Untitled" : layout.name)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
+                    // Renaming is a double-click with nothing to suggest it.
+                    // The tint is drawn as a background with negative insets so
+                    // revealing it cannot change the chip's width.
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.primary.opacity(nameHovering ? 0.14 : 0))
+                            .padding(EdgeInsets(top: -2, leading: -5, bottom: -2, trailing: -5))
+                    )
+                    .onHover { nameHovering = $0 }
+                    .hoverCursor(.iBeam)
+                    .help("Double-click to rename")
             }
 
             deleteButton
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(Capsule().fill(Color.primary.opacity(isRenaming ? 0.22 : isActive ? 0.22 : 0.08)))
+        .background(Capsule().fill(Color.primary.opacity(capsuleFill)))
         .overlay(
             Capsule().strokeBorder(
-                Color.primary.opacity(isActive ? 0.5 : 0.0),
+                Color.primary.opacity(capsuleBorder),
                 lineWidth: 1
             )
         )
         .contentShape(Capsule())
+        // The whole capsule is the click target for selecting this layout, so
+        // the whole capsule is what lights up. Kept clearly below the selected
+        // chip's own weight, or hovering would read as having already switched.
+        .onHover { pillHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: pillHovering)
     }
+
+    /// Selected outweighs hovered: a hovered chip should look reachable, not
+    /// look chosen.
+    private var capsuleFill: Double {
+        if isRenaming || isActive { return 0.22 }
+        return pillHovering ? 0.16 : 0.08
+    }
+
+    private var capsuleBorder: Double {
+        if isActive { return 0.5 }
+        return pillHovering ? 0.22 : 0.0
+    }
+
+    /// A thumbnail of the layout's shape — literally the graphic the menubar
+    /// draws beside each layout, so the two agree.
+    ///
+    /// The SwiftUI previews used elsewhere (MultiMonitorPreviewView) are built
+    /// for thumbnails several times this size: the stack's fanned cards have
+    /// floor sizes that stop scaling down, so at chip size every layout renders
+    /// as the same orange blob. This renderer is drawn for 16pt and stays
+    /// legible.
+    ///
+    /// Hidden from accessibility on purpose. It carries no information the
+    /// chip's own label doesn't already give, and every element added here
+    /// shows up in the interface tests' view of the surface.
+    private var layoutPreview: some View {
+        Image(nsImage: NSImage.layoutIcon(
+            for: layout,
+            size: NSSize(width: Self.previewSize.width, height: Self.previewSize.height)
+        ))
+        .renderingMode(.template)
+        .foregroundStyle(.primary.opacity(0.75))
+        .accessibilityHidden(true)
+    }
+
+    /// Sized to sit inside the chip without setting its height: the name is
+    /// 14pt, so anything taller than this makes the capsule grow.
+    private static let previewSize = CGSize(width: 21, height: 13)
 
     /// Clicking the chip picks this layout's menu bar shortcut. When none is
     /// set it falls back to showing the positional ⌘1–⌘9, which always works
@@ -2188,8 +2279,12 @@ private struct LayoutPill: View {
             keycap
         }
         .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        // Always shown. Nothing else marks the keycap as something you can
+        // open, and revealing it only on hover still left it undiscoverable
+        // until you happened to point at it.
+        .menuIndicator(.visible)
         .fixedSize()
+        .hoverCursor(.pointingHand)
         .help("Menu bar shortcut for this layout")
     }
 

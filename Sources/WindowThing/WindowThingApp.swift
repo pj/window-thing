@@ -207,9 +207,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func rebuildStatusMenu(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // Get current displays for generating layout icons
-        let displays = windowManager.getDisplays()
-
         // Layouts at top level. Capped because the menu shares the screen with
         // every other status item's, but high enough that a layout you just
         // added is actually in it — at five, a sixth layout could never appear,
@@ -229,7 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 )
                 item.representedObject = layout
                 item.target = self
-                item.image = NSImage.layoutIcon(for: layout, displays: displays)
+                item.image = NSImage.layoutIcon(for: layout)
                 menu.addItem(item)
             }
         }

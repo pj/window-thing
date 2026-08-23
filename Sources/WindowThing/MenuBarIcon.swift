@@ -133,7 +133,7 @@ extension NSImage {
 
     /// Creates a menu item icon representing a layout structure
     /// The icon shows a simplified view of how windows are arranged
-    static func layoutIcon(for layout: Layout, displays: [Display], size: NSSize = NSSize(width: 16, height: 16)) -> NSImage {
+    static func layoutIcon(for layout: Layout, size: NSSize = NSSize(width: 16, height: 16)) -> NSImage {
         let image = NSImage(size: size, flipped: false) { rect in
             NSColor.black.setStroke()
             NSColor.black.setFill()
