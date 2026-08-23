@@ -2,11 +2,14 @@
 set -euo pipefail
 
 # Configuration
-VM_NAME="windowthing-test"
+# One VM, shared across projects. Override to point at another.
+VM_NAME="${VM_NAME:-macos-dev}"
 SSH_USER="admin"
 SSH_PASS="admin"
 SSH_TIMEOUT=90
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# Named after this project, so a shared VM can hold several side by side.
+REMOTE_DIR="~/Projects/$(basename "$PROJECT_DIR")"
 
 # Colors for output
 RED='\033[0;31m'
@@ -32,7 +35,7 @@ check_tart() {
 check_vm() {
     if ! tart list | grep -q "^local.*${VM_NAME}"; then
         log_error "VM '${VM_NAME}' not found."
-        log_info  "Build it first with: cd vm/packer && packer build windowthing-test.pkr.hcl"
+        log_info  "Build it first with: cd vm/packer && packer build macos-dev.pkr.hcl"
         exit 1
     fi
 }
@@ -72,6 +75,7 @@ wait_for_ssh() {
     done
     log_info "SSH available"
     sleep 2  # Let sshd fully initialise
+    ensure_ssh_auth "$ip"
 }
 
 cleanup() {
@@ -83,29 +87,134 @@ cleanup() {
 # SSH helpers                                                                   #
 # --------------------------------------------------------------------------- #
 
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o IdentitiesOnly=yes -o PubkeyAuthentication=no"
+SSH_BASE="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
+# Password auth until a key is installed; see ensure_ssh_auth.
+SSH_OPTS="$SSH_BASE -o IdentitiesOnly=yes -o PubkeyAuthentication=no"
+SSH_MODE="password"
+
+# Switch to key authentication, installing the key first if need be.
+#
+# macOS's sshd rejects correct passwords intermittently under the rapid
+# connection rate this harness works at — measured at 3 failures in 25 on a
+# macOS 26 guest, which across the ~20 connections of a run makes a spurious
+# failure more likely than not. It surfaces as "Permission denied, please try
+# again" followed by "Too many authentication failures", which reads as a wrong
+# password rather than as flakiness. Key auth does not go through that path.
+#
+# The password is still how the key gets in, so that one connection retries.
+ensure_ssh_auth() {
+    local ip=$1
+
+    key_auth_works() {
+        [ -f "$SSH_KEY" ] && ssh $SSH_BASE -i "$SSH_KEY" -o IdentitiesOnly=yes \
+            -o PasswordAuthentication=no -o BatchMode=yes \
+            "${SSH_USER}@${ip}" true 2>/dev/null
+    }
+
+    if key_auth_works; then
+        SSH_OPTS="$SSH_BASE -i $SSH_KEY -o IdentitiesOnly=yes -o PasswordAuthentication=no"
+        SSH_MODE="key"
+        return 0
+    fi
+
+    if [ ! -f "${SSH_KEY}.pub" ]; then
+        log_warn "no key at ${SSH_KEY}.pub — staying on password auth, which flakes"
+        return 0
+    fi
+
+    log_info "Installing SSH key in the VM (one time)"
+    local pub attempt
+    pub="$(cat "${SSH_KEY}.pub")"
+    for attempt in 1 2 3 4 5; do
+        if sshpass -p "$SSH_PASS" ssh $SSH_OPTS "${SSH_USER}@${ip}" \
+             "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+              grep -qxF '$pub' ~/.ssh/authorized_keys 2>/dev/null || echo '$pub' >> ~/.ssh/authorized_keys; \
+              chmod 600 ~/.ssh/authorized_keys" 2>/dev/null; then
+            break
+        fi
+        sleep 2
+    done
+
+    if key_auth_works; then
+        SSH_OPTS="$SSH_BASE -i $SSH_KEY -o IdentitiesOnly=yes -o PasswordAuthentication=no"
+        SSH_MODE="key"
+        log_info "SSH key authentication active"
+    else
+        log_warn "could not install an SSH key — staying on password auth"
+    fi
+}
+
+# Retries only transport failures, never the remote command's own exit status:
+# ssh reports its own errors as 255, and sshpass reports a rejected password as
+# 5. Retrying anything else would silently re-run a failing build.
 ssh_run() {
     local ip=$1
     shift
-    sshpass -p "$SSH_PASS" ssh $SSH_OPTS "${SSH_USER}@${ip}" "$@"
+    local attempt rc
+    for attempt in 1 2 3 4 5; do
+        if [ "$SSH_MODE" = "key" ]; then
+            ssh $SSH_OPTS "${SSH_USER}@${ip}" "$@"
+            rc=$?
+            [ "$rc" -ne 255 ] && return "$rc"
+        else
+            sshpass -p "$SSH_PASS" ssh $SSH_OPTS "${SSH_USER}@${ip}" "$@"
+            rc=$?
+            [ "$rc" -ne 255 ] && [ "$rc" -ne 5 ] && return "$rc"
+        fi
+        sleep 2
+    done
+    return "$rc"
+}
+
+# vm/ is excluded from the project sync, so the interface tests are sent
+# separately. Same auth mode and retry as rsync_to_vm.
+rsync_scripts_to_vm() {
+    local ip=$1
+    local attempt
+    for attempt in 1 2 3; do
+        if [ "$SSH_MODE" = "key" ]; then
+            rsync -az -e "ssh $SSH_OPTS" \
+                "$PROJECT_DIR/vm/scripts/" "${SSH_USER}@${ip}:$REMOTE_DIR/vm/scripts/" && return 0
+        else
+            sshpass -p "$SSH_PASS" rsync -az -e "ssh $SSH_OPTS" \
+                "$PROJECT_DIR/vm/scripts/" "${SSH_USER}@${ip}:$REMOTE_DIR/vm/scripts/" && return 0
+        fi
+        sleep 2
+    done
+    return 1
 }
 
 ssh_run_bg() {
     local ip=$1
     shift
-    sshpass -p "$SSH_PASS" ssh $SSH_OPTS \
-        "${SSH_USER}@${ip}" "nohup $* </dev/null >/tmp/bg.log 2>&1 & echo \$!"
+    if [ "$SSH_MODE" = "key" ]; then
+        ssh $SSH_OPTS "${SSH_USER}@${ip}" "nohup $* </dev/null >/tmp/bg.log 2>&1 & echo \$!"
+    else
+        sshpass -p "$SSH_PASS" ssh $SSH_OPTS \
+            "${SSH_USER}@${ip}" "nohup $* </dev/null >/tmp/bg.log 2>&1 & echo \$!"
+    fi
 }
 
 rsync_to_vm() {
     local ip=$1
     local src=$2
     local dst=$3
-    sshpass -p "$SSH_PASS" rsync -az --delete \
-        --exclude '.build' --exclude '.git' --exclude 'vm' --exclude 'build' \
-        -e "ssh $SSH_OPTS" \
-        "$src" "${SSH_USER}@${ip}:${dst}"
+    local attempt
+    for attempt in 1 2 3; do
+        if [ "$SSH_MODE" = "key" ]; then
+            rsync -az --delete \
+                --exclude '.build' --exclude '.git' --exclude 'vm' --exclude 'build' \
+                -e "ssh $SSH_OPTS" "$src" "${SSH_USER}@${ip}:${dst}" && return 0
+        else
+            sshpass -p "$SSH_PASS" rsync -az --delete \
+                --exclude '.build' --exclude '.git' --exclude 'vm' --exclude 'build' \
+                -e "ssh $SSH_OPTS" "$src" "${SSH_USER}@${ip}:${dst}" && return 0
+        fi
+        sleep 2
+    done
+    return 1
 }
 
 # --------------------------------------------------------------------------- #
@@ -118,7 +227,7 @@ rsync_to_vm() {
 # to both /usr/bin/swift and the compiled test binary.
 grant_tcc_access() {
     local ip=$1
-    local proj="~/Projects/window_thing"
+    local proj="$REMOTE_DIR"
 
     log_info "Granting Accessibility TCC permissions..."
 
@@ -239,17 +348,17 @@ run_tests() {
     # Sync source                                                           #
     # ------------------------------------------------------------------ #
     log_info "Syncing project to VM..."
-    ssh_run "$ip" "mkdir -p ~/Projects/window_thing"
-    rsync_to_vm "$ip" "$PROJECT_DIR/" "~/Projects/window_thing/"
+    ssh_run "$ip" "mkdir -p $REMOTE_DIR"
+    rsync_to_vm "$ip" "$PROJECT_DIR/" "$REMOTE_DIR/"
 
     # ------------------------------------------------------------------ #
     # Build                                                                 #
     # ------------------------------------------------------------------ #
     # Clean any stale build artefacts (e.g. corrupted DB from a prior failed run)
-    ssh_run "$ip" "cd ~/Projects/window_thing && swift package clean 2>/dev/null || rm -rf .build/build.db" || true
+    ssh_run "$ip" "cd $REMOTE_DIR && swift package clean 2>/dev/null || rm -rf .build/build.db" || true
 
     log_info "Building project in VM..."
-    if ! ssh_run "$ip" "cd ~/Projects/window_thing && swift build --build-tests 2>&1"; then
+    if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
         log_error "Build failed"
         exit 1
     fi
@@ -305,7 +414,7 @@ run_tests() {
     # --no-parallel prevents Swift Testing from running test suites concurrently
     # across targets. Without this, global singletons (WindowManager, LayoutManager)
     # get accessed from multiple threads simultaneously, causing intermittent SIGSEGVs.
-    local test_cmd="cd ~/Projects/window_thing && swift test --no-parallel"
+    local test_cmd="cd $REMOTE_DIR && swift test --no-parallel"
     if [ -n "$test_filter" ]; then
         test_cmd="$test_cmd --filter '$test_filter'"
     fi
@@ -330,10 +439,8 @@ run_tests() {
         # and vm/screenshots would be pointless traffic. The interface test does
         # live in there, though, so send that directory across on its own.
         log_info "Syncing interface test scripts..."
-        ssh_run "$ip" "mkdir -p ~/Projects/window_thing/vm/scripts"
-        sshpass -p "$SSH_PASS" rsync -az -e "ssh $SSH_OPTS" \
-            "$PROJECT_DIR/vm/scripts/" \
-            "${SSH_USER}@${ip}:~/Projects/window_thing/vm/scripts/"
+        ssh_run "$ip" "mkdir -p $REMOTE_DIR/vm/scripts"
+        rsync_scripts_to_vm "$ip"
 
         log_info "Running interface tests..."
         # Two layers here, and both are needed.
@@ -347,7 +454,7 @@ run_tests() {
         # files in .build that no later build could overwrite — and ran the app
         # under test as root, which is not how anyone runs it.
         if ssh_run "$ip" "sudo launchctl asuser 501 sudo -u ${SSH_USER} /bin/bash -lc \
-            'PROJECT_DIR=~/Projects/window_thing ~/Projects/window_thing/vm/scripts/ui-test.sh' 2>&1"; then
+            'PROJECT_DIR=$REMOTE_DIR $REMOTE_DIR/vm/scripts/ui-test.sh' 2>&1"; then
             log_info "Interface tests passed."
         else
             log_error "Interface tests failed."

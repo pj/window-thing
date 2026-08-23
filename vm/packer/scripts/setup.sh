@@ -8,7 +8,7 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # --------------------------------------------------------------------------- #
 # Xcode toolchain                                                               #
-# Full Xcode is pre-installed in the macos-sequoia-xcode base image.           #
+# Full Xcode is pre-installed in the macos-tahoe-xcode base image.              #
 # --------------------------------------------------------------------------- #
 echo "Verifying Xcode toolchain..."
 sudo xcodebuild -license accept 2>/dev/null || true
@@ -66,50 +66,14 @@ sudo mdutil -a -i off 2>/dev/null || true
 # --------------------------------------------------------------------------- #
 # Test helper scripts                                                           #
 # --------------------------------------------------------------------------- #
-echo "Creating test helper scripts..."
-mkdir -p ~/Projects/windowthing-helpers
-
-# create-test-windows.swift — spawns 3 real AppKit windows for integration tests
-cat > ~/Projects/windowthing-helpers/create-test-windows.swift << 'SWIFT'
-#!/usr/bin/env swift
-import Cocoa
-
-class TestWindowApp: NSObject, NSApplicationDelegate {
-    var windows: [NSWindow] = []
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        for i in 1...3 {
-            let window = NSWindow(
-                contentRect: NSRect(x: 100 + i * 50, y: 100 + i * 50, width: 400, height: 300),
-                styleMask: [.titled, .closable, .resizable, .miniaturizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Test Window \(i)"
-            window.makeKeyAndOrderFront(nil)
-            windows.append(window)
-        }
-        print("Created \(windows.count) test windows")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { NSApp.terminate(nil) }
-    }
-}
-
-let app = NSApplication.shared
-let delegate = TestWindowApp()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
-SWIFT
-chmod +x ~/Projects/windowthing-helpers/create-test-windows.swift
-
 # --------------------------------------------------------------------------- #
 # Working directory for WindowThing source                                      #
 # --------------------------------------------------------------------------- #
-mkdir -p ~/Projects/window_thing
+mkdir -p ~/Projects
 
 echo ""
 echo "=== Setup Complete ==="
 echo "Accessibility TCC pre-granted for /usr/bin/swift and Terminal."
 echo "The compiled test bundle will be granted at run-test time by run-tests.sh."
-echo "Drop the WindowThing source into ~/Projects/window_thing and run:"
-echo "  cd ~/Projects/window_thing && swift test"
+echo "Projects sync into ~/Projects/<name>; from one of those run:"
+echo "  swift test"

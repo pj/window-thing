@@ -26,12 +26,18 @@ brew install hudochenkov/sshpass/sshpass # Non-interactive SSH
 
 ```bash
 cd vm/packer
-packer init windowthing-test.pkr.hcl
-packer build windowthing-test.pkr.hcl
+packer init macos-dev.pkr.hcl
+packer build macos-dev.pkr.hcl
 ```
 
-This creates a local VM named `windowthing-test` with:
-- macOS Sequoia + Xcode Command Line Tools (Swift 6.x)
+This creates a local VM named `macos-dev` with:
+
+The name is deliberately not project-specific: one VM is shared across projects,
+each syncing into its own `~/Projects/<name>`. Point another project at it by
+setting `VM_NAME`, or copy `vm/` across unchanged — the scripts derive both the
+VM name and the remote directory rather than hard-coding this project.
+
+- macOS Tahoe (26.x) + full Xcode
 - Accessibility TCC pre-granted for `/usr/bin/swift` and Terminal
 - Sleep and Spotlight disabled for build performance
 
@@ -94,7 +100,7 @@ To watch or click through anything by hand, start the VM with its display
 attached first, then capture against the running VM:
 
 ```bash
-tart run windowthing-test &                    # opens a VM window
+tart run macos-dev &                    # opens a VM window
 ./vm/capture-screenshots.sh --keep
 ```
 
@@ -208,7 +214,7 @@ macOS requires explicit permission for any process that reads or moves windows v
 
 **Manual re-grant** (if needed):
 ```bash
-sshpass -p admin ssh admin@$(tart ip windowthing-test)
+sshpass -p admin ssh admin@$(tart ip macos-dev)
 bash ~/Projects/window_thing/vm/scripts/grant-tcc-access.sh ~/Projects/window_thing
 ```
 
@@ -224,11 +230,11 @@ bash ~/Projects/window_thing/vm/scripts/grant-tcc-access.sh ~/Projects/window_th
 
 ```bash
 tart list
-tart run windowthing-test                       # with GUI (debugging)
-tart run windowthing-test --no-graphics &       # headless
-tart ip windowthing-test                        # get IP
-sshpass -p admin ssh admin@$(tart ip windowthing-test)
-tart stop windowthing-test
+tart run macos-dev                       # with GUI (debugging)
+tart run macos-dev --no-graphics &       # headless
+tart ip macos-dev                        # get IP
+sshpass -p admin ssh admin@$(tart ip macos-dev)
+tart stop macos-dev
 ```
 
 ---
@@ -246,7 +252,7 @@ vm/
 │   ├── set-display-mode.swift    # Sets the guest's display resolution
 │   └── create-virtual-display.swift  # CGVirtualDisplay second-monitor helper
 └── packer/
-    ├── windowthing-test.pkr.hcl  # Packer template
+    ├── macos-dev.pkr.hcl        # Packer template
     └── scripts/
         └── setup.sh              # VM provisioning
 ```
@@ -255,12 +261,12 @@ vm/
 
 ## Troubleshooting
 
-**SSH timeout** — VM takes 60-90 s to boot. `run-tests.sh` waits up to 90 s. If still failing, try `tart run windowthing-test` with GUI to confirm the VM is healthy.
+**SSH timeout** — VM takes 60-90 s to boot. `run-tests.sh` waits up to 90 s. If still failing, try `tart run macos-dev` with GUI to confirm the VM is healthy.
 
 **Integration tests skip** — If the tests print "Accessibility permissions not granted", the TCC grant didn't take effect. SSH in and re-run `grant-tcc-access.sh` manually, then re-run the tests.
 
 **Rebuild the image**:
 ```bash
-tart delete windowthing-test
-cd vm/packer && packer build windowthing-test.pkr.hcl
+tart delete macos-dev
+cd vm/packer && packer build macos-dev.pkr.hcl
 ```

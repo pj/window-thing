@@ -131,21 +131,35 @@ struct CompactTileView: View {
     private var compactStackBackground: some View {
         ZStack {
             Rectangle().fill(Color.orange.opacity(0.04))
-            ForEach(0..<3, id: \.self) { i in
-                let o = CGFloat(2 - i) * max(1.5, size.width * 0.06)
-                RoundedRectangle(cornerRadius: max(1, size.width * 0.04))
-                    .fill(Color.orange.opacity(0.1 + Double(i) * 0.06))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: max(1, size.width * 0.04))
-                            .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
-                    )
-                    .frame(
-                        width: max(4, size.width * 0.72 - o),
-                        height: max(3, size.height * 0.62 - o * 0.6)
-                    )
-                    .offset(x: o * 0.6, y: -o * 0.4)
+            ForEach(0..<3, id: \.self) { index in
+                stackCard(index: index)
             }
         }
+    }
+
+    /// One card of the stack's fanned-out look.
+    ///
+    /// Split out of the ZStack above, with every measurement given an explicit
+    /// type. As a single chained expression the type-checker has to solve the
+    /// corner radius, opacity, frame and offset arithmetic together, and Swift
+    /// 6.3 gives up on it ("unable to type-check this expression in reasonable
+    /// time"). 6.1 happened to manage it, so this only surfaced on a toolchain
+    /// bump rather than when it was written.
+    private func stackCard(index: Int) -> some View {
+        let inset: CGFloat = CGFloat(2 - index) * max(1.5, size.width * 0.06)
+        let radius: CGFloat = max(1, size.width * 0.04)
+        let fill: Double = 0.1 + Double(index) * 0.06
+        let cardWidth: CGFloat = max(4, size.width * 0.72 - inset)
+        let cardHeight: CGFloat = max(3, size.height * 0.62 - inset * 0.6)
+
+        return RoundedRectangle(cornerRadius: radius)
+            .fill(Color.orange.opacity(fill))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius)
+                    .stroke(Color.orange.opacity(0.3), lineWidth: 0.5)
+            )
+            .frame(width: cardWidth, height: cardHeight)
+            .offset(x: inset * 0.6, y: -inset * 0.4)
     }
 }
 

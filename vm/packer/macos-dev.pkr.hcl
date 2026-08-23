@@ -9,14 +9,14 @@ packer {
 
 variable "base_image" {
   type        = string
-  default     = "ghcr.io/cirruslabs/macos-sequoia-xcode:latest"
+  default     = "ghcr.io/cirruslabs/macos-tahoe-xcode:latest"
   description = "Base macOS image with full Xcode (required for #Preview macro compilation)"
 }
 
 variable "vm_name" {
   type        = string
-  default     = "windowthing-test"
-  description = "Name for the built VM"
+  default     = "macos-dev"
+  description = "Name for the built VM. Deliberately not project-specific: one VM is shared across projects, each syncing to its own ~/Projects/<name>."
 }
 
 variable "cpu_count" {

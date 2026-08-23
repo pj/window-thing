@@ -7,13 +7,14 @@ set -euo pipefail
 # works even with `tart run --no-graphics`. Screens are opened non-interactively
 # via the app's `--screenshot <scene>` launch flag.
 
-VM_NAME="windowthing-test"
+# One VM, shared across projects. Override to point at another.
+VM_NAME="${VM_NAME:-macos-dev}"
 SSH_USER="admin"
 SSH_PASS="admin"
 SSH_TIMEOUT=90
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$PROJECT_DIR/vm/screenshots"
-REMOTE_PROJ="~/Projects/window_thing"
+REMOTE_PROJ="~/Projects/$(basename "$PROJECT_DIR")"
 
 # Default scenes to capture. The layout editor was folded into the activation
 # surface, so "space" is the whole editing UI now; "overlay" survives only as an
@@ -93,7 +94,7 @@ for tool in tart sshpass rsync; do
 done
 
 tart list | grep -q "${VM_NAME}" || {
-    log_error "VM '${VM_NAME}' not found. Build it with: cd vm/packer && packer build windowthing-test.pkr.hcl"
+    log_error "VM '${VM_NAME}' not found. Build it with: cd vm/packer && packer build macos-dev.pkr.hcl"
     exit 1
 }
 

@@ -16,7 +16,9 @@
 
 set -uo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/Projects/window_thing}"
+# Derived from this script's own location rather than named, so the harness
+# works unchanged in whichever project it was synced into.
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 source "$PROJECT_DIR/vm/scripts/ui-lib.sh"
 
 info "Building the app bundle"
