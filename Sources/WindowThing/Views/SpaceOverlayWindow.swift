@@ -496,6 +496,7 @@ struct SpaceOverlayView: View {
 
     @Environment(\.colorScheme) private var scheme
 
+    @State private var closeHovering = false
     @State private var dropTarget: NodePath?
     @State private var hoveredPath: NodePath?
 
@@ -684,6 +685,10 @@ struct SpaceOverlayView: View {
     /// How far the floating chrome reaches into a pane. Only panes touching the
     /// top of the screen are affected; everything lower gets nothing.
     private func chromeOverlap(for slot: TileSlot) -> CGFloat {
+        // Only the primary screen carries the bar; elsewhere the close button
+        // is the whole of the chrome, and it is a small control in the corner
+        // rather than a band across the top.
+        guard showsLayoutBar else { return 0 }
         let barBottom: CGFloat = showsScopeBar ? 152 : 100
         return max(0, barBottom - slot.rect.minY)
     }
@@ -749,18 +754,74 @@ struct SpaceOverlayView: View {
         (viewModel.editingLayout?.screenSets.count ?? 0) > 1
     }
 
-    private func chrome(tiles: [TileSlot]) -> some View {
-        VStack(spacing: 12) {
-            LayoutSwitcherBar(viewModel: viewModel, onClose: dismiss)
-                .padding(.top, 24)
+    /// The layout bar is drawn on the primary display only.
+    ///
+    /// The surface puts a window on every screen, and repeating the bar on each
+    /// one read as per-display state — which it is not. Switching layout is
+    /// global, so the same control on three screens invited the idea that each
+    /// screen had its own. A secondary screen is there to show that display's
+    /// panes; it gets those and the close button, nothing else.
+    private var showsLayoutBar: Bool {
+        monitorKey == ScreenConfig.primaryKey
+    }
 
-            if showsScopeBar {
-                ScopeBar(viewModel: viewModel)
+    /// Close is laid out independently of the bar: pinned to the corner, and on
+    /// every screen, where the bar is only on one.
+    private func chrome(tiles: [TileSlot]) -> some View {
+        ZStack(alignment: .top) {
+            if showsLayoutBar {
+                VStack(spacing: 12) {
+                    LayoutSwitcherBar(viewModel: viewModel)
+                        .padding(.top, 24)
+
+                    if showsScopeBar {
+                        ScopeBar(viewModel: viewModel)
+                    }
+
+                    Spacer(minLength: 0)
+                }
             }
 
-            Spacer(minLength: 0)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    closeButton
+                    Spacer(minLength: 0)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 24)
+            .padding(.leading, 24)
         }
         .allowsHitTesting(true)
+    }
+
+    /// Its own control in the corner rather than the last item in the layout
+    /// bar. In the bar it sat after the layouts and the add button, so closing
+    /// the editor looked like one more thing you could do to a layout — and the
+    /// bar is not on every screen, while a way out has to be.
+    private var closeButton: some View {
+        Button(action: dismiss) {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.primary.opacity(0.75))
+                .frame(width: 34, height: 34)
+                .background(
+                    Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
+                )
+                .overlay(
+                    Circle().strokeBorder(
+                        Color.primary.opacity(closeHovering ? 0.45 : 0.12),
+                        lineWidth: 1
+                    )
+                )
+                .shadow(color: .black.opacity(0.35), radius: 10, y: 3)
+        }
+        .buttonStyle(.plain)
+        .onHover { closeHovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: closeHovering)
+        .help("Close (esc)")
+        .accessibilityLabel("Close layout surface")
+        .accessibilityIdentifier("surface.close")
     }
 
     // MARK: - Window actions
@@ -985,6 +1046,120 @@ private struct CellView: View {
     let onSplit: (SplitAxis) -> Void
     let onDelete: () -> Void
 
+    /// Owned here rather than in the chooser: the field is in the band and the
+    /// list it filters is in the content, and they are siblings.
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    /// Only a pane showing a chooser has anything to search. The stack shows
+    /// what has landed in it, and an empty pane shows a hint.
+    private var showsChooser: Bool {
+        !windows.isEmpty && slot.node.type != .stack
+    }
+
+    /// The pane's controls, and the search for its chooser, as one floating
+    /// cluster over the bottom of the pane.
+    ///
+    /// The capsule lives here rather than on `CellControls` because the search
+    /// joined it: two adjacent capsules would read as two separate objects,
+    /// where this is one bar with two halves.
+    private var paneBar: some View {
+        HStack(spacing: 8) {
+            CellControls(
+                addressLabel: slot.addressLabel,
+                node: slot.node,
+                canDelete: !slot.path.isRoot,
+                cellSize: slot.rect.size,
+                onSetType: onSetType,
+                onSplit: onSplit,
+                onDelete: onDelete
+            )
+
+            if showsChooser {
+                searchField
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        // Solid, matching the layout bar: the controls need a consistent ground
+        // to read against, and the preview behind them is arbitrary content.
+        .background(Capsule().fill(Color(nsColor: .windowBackgroundColor)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+        .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+    }
+
+    /// What's left of the pane's width once the controls have had theirs.
+    ///
+    /// A floating bar has to stay narrower than the pane it sits in, and a
+    /// plain TextField has no width of its own — left to itself it either
+    /// collapses to nothing or pushes the capsule past the pane's edges.
+    private var searchWidth: CGFloat {
+        let controls: CGFloat = 190
+        return min(220, max(96, slot.rect.width - controls - 60))
+    }
+
+    /// Moved out of the chooser's scrolling list, where it scrolled away with
+    /// the very results it was filtering.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary.opacity(0.5))
+
+            TextField("Search apps and windows", text: $query)
+                .accessibilityLabel("Search apps and windows")
+                .accessibilityIdentifier("chooser.search")
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(.primary)
+                .focused($searchFocused)
+                .onSubmit { chooseFirstMatch() }
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .frame(width: searchWidth)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .overlay(
+            Capsule().strokeBorder(
+                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
+                lineWidth: searchFocused ? 2 : 1
+            )
+        )
+        // Lets the window stand down from treating keystrokes as commands.
+        .onChange(of: searchFocused) { focused in onTextFocusChanged(focused) }
+        .onDisappear { onTextFocusChanged(false) }
+        // The window is retained between showings, so this would otherwise
+        // carry a stale query over from last time.
+        .onChange(of: sessionID) { _ in query = "" }
+    }
+
+    /// Return picks the obvious result: the single matching window if the query
+    /// narrowed to one, otherwise the first app still standing.
+    private func chooseFirstMatch() {
+        let matches = ChooserMatch.filtered(
+            ChooserMatch.groups(apps: runningApps, windows: windows),
+            query: query
+        )
+        guard let first = matches.first else { return }
+        if matches.count == 1, first.windows.count == 1 {
+            onChoose(first.windows[0])
+        } else {
+            onChooseApp(first.app)
+        }
+    }
+
     private var borderOpacity: Double {
         if isDropTarget { return 0.95 }
         if isHovered { return 0.6 }
@@ -1011,15 +1186,7 @@ private struct CellView: View {
 
             VStack {
                 Spacer()
-                CellControls(
-                    addressLabel: slot.addressLabel,
-                    node: slot.node,
-                    canDelete: !slot.path.isRoot,
-                    cellSize: slot.rect.size,
-                    onSetType: onSetType,
-                    onSplit: onSplit,
-                    onDelete: onDelete
-                )
+                paneBar
             }
             .padding(12)
         }
@@ -1047,8 +1214,7 @@ private struct CellView: View {
                 onChooseApp: onChooseApp,
                 onChooseWindow: onChoose,
                 onChooseEmpty: onChooseEmpty,
-                onTextFocusChanged: onTextFocusChanged,
-                sessionID: sessionID
+                query: query
             )
         }
     }
@@ -1076,6 +1242,52 @@ private struct EmptyCellHint: View {
             }
         }
         .foregroundColor(.primary.opacity(0.45))
+    }
+}
+
+/// Grouping and filtering for the chooser.
+///
+/// Lifted out of `PaneChooser` when the search field moved into the pane bar.
+/// The field and the list it filters now live in different views — the bar and
+/// the pane's content — and both need the same answer about what matches, so
+/// neither can own it.
+private enum ChooserMatch {
+    struct Group: Identifiable {
+        let app: RunningAppInfo
+        let windows: [WTWindow]
+        var id: String { app.bundleId ?? app.name }
+    }
+
+    /// One box per running app — including apps with nothing open, so a pane
+    /// can still be pinned to an app that isn't showing a window right now.
+    /// Apps with windows sort first, since those are what you're usually after.
+    static func groups(apps: [RunningAppInfo], windows: [WTWindow]) -> [Group] {
+        apps
+            .map { app in Group(app: app, windows: windows.filter { belongs($0, to: app) }) }
+            .sorted { lhs, rhs in
+                if lhs.windows.isEmpty != rhs.windows.isEmpty { return !lhs.windows.isEmpty }
+                return lhs.app.name.localizedCaseInsensitiveCompare(rhs.app.name) == .orderedAscending
+            }
+    }
+
+    /// An app matches by name — keeping all its windows — or by any of its
+    /// window titles, in which case only the matching windows are shown.
+    static func filtered(_ groups: [Group], query: String) -> [Group] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return groups }
+
+        return groups.compactMap { group in
+            if group.app.name.lowercased().contains(needle) { return group }
+            let hits = group.windows.filter { $0.title.lowercased().contains(needle) }
+            return hits.isEmpty ? nil : Group(app: group.app, windows: hits)
+        }
+    }
+
+    private static func belongs(_ window: WTWindow, to app: RunningAppInfo) -> Bool {
+        if let bundleId = app.bundleId, let windowBundleId = window.bundleId {
+            return windowBundleId == bundleId
+        }
+        return window.application.localizedCaseInsensitiveCompare(app.name) == .orderedSame
     }
 }
 
@@ -1135,13 +1347,9 @@ private struct CellControls: View {
                 fullControls
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        // Solid, matching the layout bar: the controls need a consistent ground
-        // to read against, and the preview behind them is arbitrary content.
-        .background(Capsule().fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+        // No ground of its own: these controls share the pane bar's capsule
+        // with the search field, and giving each its own would read as two
+        // separate floating objects rather than one bar.
     }
 
     private var separator: some View {
@@ -1446,13 +1654,10 @@ private struct PaneChooser: View {
     let onChooseApp: (RunningAppInfo) -> Void
     let onChooseWindow: (WTWindow) -> Void
     let onChooseEmpty: () -> Void
-    /// Lets the window stand down from treating keystrokes as commands.
-    let onTextFocusChanged: (Bool) -> Void
-    /// Changes on each showing; the query is cleared when it does.
-    let sessionID: Int
-
-    @State private var query = ""
-    @FocusState private var searchFocused: Bool
+    /// What the pane bar's search field currently holds. Owned by `CellView`:
+    /// the field lives in the bar now, and the list it filters lives here, so
+    /// neither can be the one holding the state.
+    let query: String
 
     private let spacing: CGFloat = 12
     /// Padding inside an app box, both sides.
@@ -1474,8 +1679,6 @@ private struct PaneChooser: View {
                 // measured at 44 app groups and 51 window tiles for two panes,
                 // most of them scrolled out of sight.
                 LazyVStack(spacing: spacing) {
-                    searchField
-
                     EmptyChoiceBox(isCurrent: isEmpty)
                         .onTapGesture(perform: onChooseEmpty)
 
@@ -1508,9 +1711,6 @@ private struct PaneChooser: View {
                 .frame(minHeight: geo.size.height, alignment: .center)
             }
             .frame(width: geo.size.width, height: geo.size.height)
-            // The window is retained between showings, so this state would
-            // otherwise carry a stale query over from last time.
-            .onChange(of: sessionID) { _ in query = "" }
         }
     }
 
@@ -1567,99 +1767,15 @@ private struct PaneChooser: View {
 
     // MARK: - Search
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary.opacity(0.5))
-
-            TextField("Search apps and windows", text: $query)
-                .accessibilityLabel("Search apps and windows")
-                .accessibilityIdentifier("chooser.search")
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-                .focused($searchFocused)
-                .onSubmit { chooseFirstMatch() }
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary.opacity(0.4))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Capsule().fill(Color.primary.opacity(0.08)))
-        .overlay(
-            Capsule().strokeBorder(
-                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
-                lineWidth: searchFocused ? 2 : 1
-            )
-        )
-        .onChange(of: searchFocused) { focused in
-            onTextFocusChanged(focused)
-        }
-        .onDisappear { onTextFocusChanged(false) }
-    }
-
-    /// Return picks the obvious result: the single matching window if the query
-    /// narrowed to one, otherwise the first app still standing.
-    private func chooseFirstMatch() {
-        let matches = filteredGroups
-        guard let first = matches.first else { return }
-        if matches.count == 1, first.windows.count == 1 {
-            onChooseWindow(first.windows[0])
-        } else {
-            onChooseApp(first.app)
-        }
-    }
-
-    /// An app matches by name — keeping all its windows — or by any of its
-    /// window titles, in which case only the matching windows are shown.
-    private var filteredGroups: [AppGroup] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return groups }
-
-        return groups.compactMap { group in
-            if group.app.name.lowercased().contains(needle) { return group }
-            let hits = group.windows.filter { $0.title.lowercased().contains(needle) }
-            return hits.isEmpty ? nil : AppGroup(app: group.app, windows: hits)
-        }
-    }
-
     // MARK: - Grouping
 
-    private struct AppGroup: Identifiable {
-        let app: RunningAppInfo
-        let windows: [WTWindow]
-        var id: String { app.bundleId ?? app.name }
-    }
+    private typealias AppGroup = ChooserMatch.Group
 
-    /// One box per running app — including apps with nothing open, so a pane can
-    /// still be pinned to an app that isn't showing a window right now. Apps
-    /// with windows sort first, since those are what you're usually after.
-    private var groups: [AppGroup] {
-        apps
-            .map { app in AppGroup(app: app, windows: windows(of: app)) }
-            .sorted { lhs, rhs in
-                if lhs.windows.isEmpty != rhs.windows.isEmpty { return !lhs.windows.isEmpty }
-                return lhs.app.name.localizedCaseInsensitiveCompare(rhs.app.name) == .orderedAscending
-            }
-    }
-
-    private func windows(of app: RunningAppInfo) -> [WTWindow] {
-        windows.filter { window in
-            if let bundleId = app.bundleId, let windowBundleId = window.bundleId {
-                return windowBundleId == bundleId
-            }
-            return window.application.localizedCaseInsensitiveCompare(app.name) == .orderedSame
-        }
+    private var filteredGroups: [AppGroup] {
+        ChooserMatch.filtered(
+            ChooserMatch.groups(apps: apps, windows: windows),
+            query: query
+        )
     }
 
     /// Mirrors `LayoutManager.windowMatches` for the app-level fields the
@@ -2014,7 +2130,6 @@ private struct WindowTile: View {
 /// context menu.
 private struct LayoutSwitcherBar: View {
     @ObservedObject var viewModel: OverlayViewModel
-    let onClose: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -2041,17 +2156,6 @@ private struct LayoutSwitcherBar: View {
             .accessibilityLabel("New layout")
             .accessibilityIdentifier("layout.add")
 
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.primary.opacity(0.7))
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(Color.primary.opacity(0.1)))
-            }
-            .buttonStyle(.plain)
-            .help("Close (esc)")
-            .accessibilityLabel("Close layout surface")
-            .accessibilityIdentifier("surface.close")
         }
         .padding(8)
         // Opaque, not a tint: the bar reads as a fixed object floating over the
