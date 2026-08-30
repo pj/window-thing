@@ -1160,3 +1160,77 @@ extension LayoutModification {
         return (100.0 / Double(newCount)) >= minPercentage
     }
 }
+
+// MARK: - Normalisation
+
+public extension LayoutNode {
+    /// Collapses structure that has no effect on what the layout draws.
+    ///
+    /// Editing leaves debris. Splitting a pane wraps it in a container; deleting
+    /// its sibling can leave that container holding a single child, and repeated
+    /// rounds nest those containers inside each other. The result renders
+    /// identically — a container with one child fills its own rect, so the child
+    /// occupies exactly the space the container did — but the tree carries
+    /// layers that do nothing, and code walking it has to cope with them. The
+    /// menubar's icon renderer did not, and drew such layouts as an empty
+    /// screen.
+    ///
+    /// Two rules, applied depth first:
+    ///
+    /// - a container holding one child becomes that child, which inherits the
+    ///   container's percentage — the child now sits where the container sat,
+    ///   so it must claim the same share of the parent;
+    /// - a container holding nothing becomes an empty pane, keeping its share.
+    ///
+    /// Both preserve geometry exactly, which is the point: this tidies the tree
+    /// without moving a single divider.
+    ///
+    /// Deliberately *not* done here: flattening a container into a parent of the
+    /// same axis. `columns[a, columns[b, c]]` could become `columns[a, b, c]`
+    /// with the percentages scaled, and would still draw the same — but it is
+    /// not the same layout to edit. Dragging the divider between `b` and `c`
+    /// currently resizes them within their own container and leaves `a` alone;
+    /// flattened, every divider resizes against every sibling. That is a change
+    /// to behaviour, not a tidy-up.
+    func normalized() -> LayoutNode {
+        switch type {
+        case .columns:
+            return normalizedContainer(children: columns ?? [], rebuild: withColumns)
+        case .rows:
+            return normalizedContainer(children: rows ?? [], rebuild: withRows)
+        case .pinned, .stack, .empty, .floatZoomed:
+            return self
+        }
+    }
+
+    private func normalizedContainer(
+        children: [LayoutNode],
+        rebuild: ([LayoutNode]) -> LayoutNode
+    ) -> LayoutNode {
+        let tidied = children.map { $0.normalized() }
+
+        guard let only = tidied.first else {
+            return .empty(percentage: percentage ?? 100)
+        }
+        if tidied.count == 1 {
+            return only.withPercentage(percentage ?? only.percentage ?? 100)
+        }
+        return rebuild(tidied)
+    }
+}
+
+public extension ScreenConfig {
+    func normalized() -> ScreenConfig {
+        var copy = self
+        copy.layouts = layouts.mapValues { $0.normalized() }
+        return copy
+    }
+}
+
+public extension Layout {
+    func normalized() -> Layout {
+        var copy = self
+        copy.screenSets = screenSets.map { $0.normalized() }
+        return copy
+    }
+}

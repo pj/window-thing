@@ -655,10 +655,20 @@ public class LayoutManager: LayoutManaging {
     // MARK: - Layout Loading
 
     public func loadLayouts(from config: AppConfig) {
-        // Repair the one-stack-per-screen-set invariant on the way in. Older
-        // versions could write a second stack — notably when adding a display,
-        // which used to default the new monitor to a full stack.
-        layouts = config.layouts.map { $0.deduplicatingStacks() }
+        // Two repairs on the way in.
+        //
+        // The one-stack-per-screen-set invariant: older versions could write a
+        // second stack — notably when adding a display, which used to default
+        // the new monitor to a full stack.
+        //
+        // And structure left behind by editing: containers holding a single
+        // child, nested inside each other by repeated splitting and deleting.
+        // They draw identically to the child they wrap, so nothing looks wrong
+        // in the layout itself, but the tree carries layers that do nothing and
+        // everything walking it has to cope with them. Normalising is
+        // geometry-preserving, so this tidies a saved layout without moving any
+        // of its dividers.
+        layouts = config.layouts.map { $0.deduplicatingStacks().normalized() }
 
         // Restore lastUsedLayout from UserDefaults
         if let uuidString = defaults.string(forKey: "lastUsedLayoutId"),

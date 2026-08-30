@@ -187,7 +187,13 @@ extension NSImage {
     }
 
     private static func drawColumns(_ children: [LayoutNode], in rect: NSRect) {
-        guard children.count > 1, rect.width > 1, rect.height > 1 else { return }
+        // One child is not nothing to draw — it is a container to descend
+        // through. Requiring two here meant a tree whose root holds a single
+        // child rendered as an empty bezel, which reads as a fullscreen layout;
+        // and single-child containers are exactly what splitting and then
+        // deleting a pane leaves behind. The separator is already skipped for
+        // the first child, so a lone one simply fills the rect.
+        guard !children.isEmpty, rect.width > 1, rect.height > 1 else { return }
 
         let defaultP = 100.0 / CGFloat(children.count)
         let total = children.reduce(CGFloat(0)) { $0 + CGFloat($1.percentage ?? Double(defaultP)) }
@@ -218,7 +224,8 @@ extension NSImage {
     }
 
     private static func drawRows(_ children: [LayoutNode], in rect: NSRect) {
-        guard children.count > 1, rect.width > 1, rect.height > 1 else { return }
+        // As above: descend through a single child rather than giving up.
+        guard !children.isEmpty, rect.width > 1, rect.height > 1 else { return }
 
         let defaultP = 100.0 / CGFloat(children.count)
         let total = children.reduce(CGFloat(0)) { $0 + CGFloat($1.percentage ?? Double(defaultP)) }

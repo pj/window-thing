@@ -58,6 +58,28 @@ if [ "$BUILD" = true ]; then
         "$SWIFT" build 2>&1
     fi
     echo "Build complete."
+
+    # Sign with a stable identity, so macOS keeps seeing the same application.
+    #
+    # `swift build` ad-hoc signs, and an ad-hoc signature's designated
+    # requirement pins the cdhash — which changes on every build. TCC therefore
+    # treats each rebuild as a different app, the Accessibility grant no longer
+    # applies, and the app is asked for permission again on every launch. It was
+    # not asking needlessly: it genuinely had no permission.
+    #
+    # Signing with the Developer ID certificate gives a requirement based on the
+    # team and identifier rather than the hash, so the grant survives rebuilds.
+    # Optional: without the certificate this is skipped and the old behaviour
+    # returns, rather than failing the build.
+    DEV_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application}"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_IDENTITY"; then
+        codesign -f -s "$DEV_IDENTITY" "$BINARY" >/dev/null 2>&1 \
+            && echo "Signed with \"$DEV_IDENTITY\"." \
+            || echo "Warning: signing failed; expect permission prompts on each launch."
+    else
+        echo "No \"$DEV_IDENTITY\" identity; skipping signing."
+        echo "  Expect macOS to ask for Accessibility again after every rebuild."
+    fi
 fi
 
 if [ ! -f "$BINARY" ]; then
