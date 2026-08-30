@@ -25,6 +25,48 @@ enum SplitAxis {
     case vertical, horizontal
 }
 
+/// Which edge of a pane a split button sits on.
+///
+/// The button marks one end of the divider it will draw. A vertical divider
+/// runs between the top and bottom edges, so the buttons at the middle of those
+/// edges are its two ends and both create it; the left and right buttons are
+/// likewise the two ends of a horizontal divider. Each pair is one action
+/// offered at whichever end is nearer.
+enum SplitEdge: CaseIterable {
+    case top, bottom, leading, trailing
+
+    /// `.vertical` means a vertical divider — columns.
+    var axis: SplitAxis {
+        switch self {
+        case .top, .bottom:       return .vertical
+        case .leading, .trailing: return .horizontal
+        }
+    }
+
+    /// What the button does, for the tooltip.
+    var action: String {
+        axis == .vertical ? "Split into columns" : "Split into rows"
+    }
+
+    /// Where it sits, which is the only thing separating the two ends of the
+    /// same divider. Spelled out so the accessibility labels stay unique —
+    /// four controls sharing a name are indistinguishable to VoiceOver and to
+    /// anything driving the interface.
+    var origin: String {
+        switch self {
+        case .top:      return "from the top"
+        case .bottom:   return "from the bottom"
+        case .leading:  return "from the left"
+        case .trailing: return "from the right"
+        }
+    }
+
+    /// The icons the pane bar used, kept so the two agree.
+    var systemName: String {
+        axis == .vertical ? "rectangle.split.2x1" : "rectangle.split.1x2"
+    }
+}
+
 // MARK: - Palette
 
 /// The surface runs in the opposite appearance to the system, so nothing in it
@@ -616,27 +658,47 @@ struct SpaceOverlayView: View {
 
     // MARK: - Canvas
 
+    /// Built in its own function with an explicit return type.
+    ///
+    /// Inline in the ForEach below, Swift 6 gave up type-checking the
+    /// expression once this gained its fourteenth argument — the same failure
+    /// the compact layout preview hit. Naming the type is what makes it
+    /// tractable again.
+    private func cell(for slot: TileSlot) -> CellView {
+        CellView(
+            slot: slot,
+            windows: windows(for: slot),
+            isHovered: hoveredPath == slot.path,
+            isDropTarget: dropTarget == slot.path,
+            runningApps: viewModel.runningApps,
+            topInset: chromeOverlap(for: slot),
+            onChoose: { choose($0, on: slot) },
+            onChooseApp: { chooseApp($0, on: slot) },
+            onChooseEmpty: { setType(slot, to: .empty) },
+            onChooseStack: { setType(slot, to: .stack) },
+            onTextFocusChanged: { viewModel.isSearchFieldFocused = $0 },
+            sessionID: viewModel.presentationCount,
+            onSplit: { split(slot, edge: $0) },
+            onDelete: { deleteCell(slot) }
+        )
+    }
+
     private func cellCanvas(tiles: [TileSlot], dividers: [DividerSlot]) -> some View {
         ZStack {
             ForEach(tiles) { slot in
-                CellView(
-                    slot: slot,
-                    windows: windows(for: slot),
-                    isHovered: hoveredPath == slot.path,
-                    isDropTarget: dropTarget == slot.path,
-                    runningApps: viewModel.runningApps,
-                    topInset: chromeOverlap(for: slot),
-                    onChoose: { choose($0, on: slot) },
-                    onChooseApp: { chooseApp($0, on: slot) },
-                    onChooseEmpty: { setType(slot, to: .empty) },
-                    onTextFocusChanged: { viewModel.isSearchFieldFocused = $0 },
-                    sessionID: viewModel.presentationCount,
-                    onSetType: { setType(slot, to: $0) },
-                    onSplit: { split(slot, axis: $0) },
-                    onDelete: { deleteCell(slot) }
-                )
+                // Everything interactive attaches before `.position`, and
+                // `.position` comes last.
+                //
+                // `.position` expands to fill its parent and places the content
+                // at a point inside it, so a modifier applied after it lands on
+                // a canvas-sized wrapper rather than on the pane. Every pane's
+                // hover region was therefore the whole canvas, and in a ZStack
+                // the last one drawn sits on top and takes every hover — so
+                // only the final pane ever looked hovered, and only the final
+                // pane could be a drop target.
+                cell(for: slot)
                 .frame(width: slot.rect.width, height: slot.rect.height)
-                .position(x: slot.rect.midX, y: slot.rect.midY)
+                .contentShape(Rectangle())
                 .onHover { inside in
                     if inside { hoveredPath = slot.path }
                     else if hoveredPath == slot.path { hoveredPath = nil }
@@ -654,6 +716,7 @@ struct SpaceOverlayView: View {
                     if targeted { dropTarget = slot.path }
                     else if dropTarget == slot.path { dropTarget = nil }
                 }
+                .position(x: slot.rect.midX, y: slot.rect.midY)
             }
 
             ForEach(dividers) { divider in
@@ -698,22 +761,33 @@ struct SpaceOverlayView: View {
     /// the pane already holds a pin. The stack instead shows what's really in
     /// it, since its whole job is to catch the windows nothing else claimed.
     private func windows(for slot: TileSlot) -> [WTWindow] {
-        guard slot.node.type != .stack else { return windows(in: slot.rect) }
-        return managedWindows
+        managedWindows
     }
 
     /// A window belongs to the cell containing its centre point.
+    ///
+    /// No longer decides what a pane lists — every pane lists everything now —
+    /// but the drag preview still says how many windows are physically sitting
+    /// in the pane being dragged, which is a question about the screen rather
+    /// than about the layout.
     private func windows(in rect: CGRect) -> [WTWindow] {
         managedWindows.filter { rect.contains(localCentre(of: $0)) }
     }
 
+    /// Window frames are global; the overlay's coordinates are display-local.
+    private func localCentre(of window: WTWindow) -> CGPoint {
+        let origin = display?.frame ?? WindowFrame(x: 0, y: 0, width: 0, height: 0)
+        return CGPoint(
+            x: window.frame.x + window.frame.width / 2 - origin.x,
+            y: window.frame.y + window.frame.height / 2 - origin.y
+        )
+    }
+
+
+
     /// Clicking a window in a chooser pane pins its app there. In the stack
     /// there's nothing to choose — the click just brings the window forward.
     private func choose(_ window: WTWindow, on slot: TileSlot) {
-        guard slot.node.type != .stack else {
-            activate(window)
-            return
-        }
         // Pin this window specifically, identified three ways so the pin degrades
         // instead of breaking: the id names it exactly for as long as it exists,
         // the title recognises it again after a relaunch, and the app catches
@@ -737,14 +811,7 @@ struct SpaceOverlayView: View {
         replaceNode(at: slot.path, with: node, actionName: "Pin App")
     }
 
-    /// Window frames are global; the overlay's coordinates are display-local.
-    private func localCentre(of window: WTWindow) -> CGPoint {
-        let origin = display?.frame ?? WindowFrame(x: 0, y: 0, width: 0, height: 0)
-        return CGPoint(
-            x: window.frame.x + window.frame.width / 2 - origin.x,
-            y: window.frame.y + window.frame.height / 2 - origin.y
-        )
-    }
+
 
     // MARK: - Chrome
 
@@ -826,11 +893,7 @@ struct SpaceOverlayView: View {
 
     // MARK: - Window actions
 
-    private func activate(_ window: WTWindow) {
-        NSRunningApplication(processIdentifier: window.pid)?
-            .activate(options: [.activateAllWindows])
-        dismiss()
-    }
+
 
     /// Dropping one pane on another exchanges them. Only the contents move —
     /// each position keeps its own size, so the layout's proportions hold.
@@ -960,9 +1023,11 @@ struct SpaceOverlayView: View {
         )
     }
 
-    private func split(_ slot: TileSlot, axis: SplitAxis) {
+    private func split(_ slot: TileSlot, edge: SplitEdge) {
         let halves = [slot.node.withPercentage(50), LayoutNode.empty(percentage: 50)]
-        let newNode = axis == .vertical ? LayoutNode.columns(halves) : LayoutNode.rows(halves)
+        let newNode = edge.axis == .vertical
+            ? LayoutNode.columns(halves)
+            : LayoutNode.rows(halves)
         replaceNode(at: slot.path, with: newNode, actionName: "Split Cell")
         viewModel.selectedNodePath = slot.path.appending(1)
     }
@@ -1040,124 +1105,137 @@ private struct CellView: View {
     let onChoose: (WTWindow) -> Void
     let onChooseApp: (RunningAppInfo) -> Void
     let onChooseEmpty: () -> Void
+    let onChooseStack: () -> Void
     let onTextFocusChanged: (Bool) -> Void
     let sessionID: Int
-    let onSetType: (LayoutType) -> Void
-    let onSplit: (SplitAxis) -> Void
+    let onSplit: (SplitEdge) -> Void
     let onDelete: () -> Void
 
-    /// Owned here rather than in the chooser: the field is in the band and the
-    /// list it filters is in the content, and they are siblings.
-    @State private var query = ""
-    @FocusState private var searchFocused: Bool
+    /// The four ways to split, one on each edge.
+    ///
+    /// The pane bar that used to carry two of these is gone: a permanent strip
+    /// of chrome in every pane, for two buttons and a number. On the edges the
+    /// button's position says which side the new pane lands on, which the two
+    /// axis buttons never could.
+    /// Which split button the pointer is on, if any. Drives both the button's
+    /// own emphasis and the preview drawn across the pane.
+    @State private var hoveredSplit: SplitEdge?
 
-    /// Only a pane showing a chooser has anything to search. The stack shows
-    /// what has landed in it, and an empty pane shows a hint.
-    private var showsChooser: Bool {
-        !windows.isEmpty && slot.node.type != .stack
+    private var splitButtons: some View {
+        ZStack {
+            // Pushed clear of the layout bar, which is opaque and floats over
+            // the top of the canvas. `topInset` is however far this pane
+            // reaches under it, and zero for every pane that does not.
+            splitButton(.top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, topInset)
+            splitButton(.bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            splitButton(.leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            splitButton(.trailing)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        }
+        .padding(6)
+        // Only while the pointer is in the pane. Four buttons on every pane at
+        // all times would be more chrome than the bar they replace.
+        .opacity(isHovered ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        // The preview follows the pointer between buttons, so it has to fade
+        // on the edge changing as well as on hover starting and stopping.
+        .animation(.easeOut(duration: 0.12), value: hoveredSplit)
     }
 
-    /// The pane's controls, and the search for its chooser, as one floating
-    /// cluster over the bottom of the pane.
-    ///
-    /// The capsule lives here rather than on `CellControls` because the search
-    /// joined it: two adjacent capsules would read as two separate objects,
-    /// where this is one bar with two halves.
-    private var paneBar: some View {
-        HStack(spacing: 8) {
-            CellControls(
-                addressLabel: slot.addressLabel,
-                node: slot.node,
-                canDelete: !slot.path.isRoot,
-                cellSize: slot.rect.size,
-                onSetType: onSetType,
-                onSplit: onSplit,
-                onDelete: onDelete
-            )
+    private func splitButton(_ edge: SplitEdge) -> some View {
+        let armed = hoveredSplit == edge
+        return Button { onSplit(edge) } label: {
+            Image(systemName: edge.systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(armed ? Color.accentColor : .primary.opacity(0.8))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.95)))
+                .overlay(
+                    Circle().strokeBorder(
+                        armed ? Color.accentColor : Color.primary.opacity(0.2),
+                        lineWidth: armed ? 2 : 1
+                    )
+                )
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .help(edge.action)
+        .accessibilityLabel(paneLabel("\(edge.action), \(edge.origin)"))
+        .onHover { hoveredSplit = $0 ? edge : nil }
+    }
 
-            if showsChooser {
-                searchField
+    /// Where the divider will land, drawn on the pane while a split button is
+    /// under the pointer.
+    ///
+    /// Four buttons around a pane say where they are but not what they do to
+    /// it, and two of them draw the same divider as the other two — showing the
+    /// result is what makes that legible without having to try it.
+    private func splitPreview(_ edge: SplitEdge) -> some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let vertical = edge.axis == .vertical
+
+            ZStack {
+                // The half that becomes the new pane. It is always the second
+                // one — right, or below — so the tint says which half you keep
+                // as much as which you gain.
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.16))
+                    .frame(width: vertical ? w / 2 : w,
+                           height: vertical ? h : h / 2)
+                    .position(x: vertical ? w * 0.75 : w / 2,
+                              y: vertical ? h / 2 : h * 0.75)
+
+                Rectangle()
+                    .fill(Color.accentColor.opacity(0.9))
+                    .frame(width: vertical ? 2 : w,
+                           height: vertical ? h : 2)
+                    .position(x: w / 2, y: h / 2)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        // Solid, matching the layout bar: the controls need a consistent ground
-        // to read against, and the preview behind them is arbitrary content.
-        .background(Capsule().fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .allowsHitTesting(false)
+        .transition(.opacity)
     }
 
-    /// What's left of the pane's width once the controls have had theirs.
+    /// Removing the pane, in its own corner.
     ///
-    /// A floating bar has to stay narrower than the pane it sits in, and a
-    /// plain TextField has no width of its own — left to itself it either
-    /// collapses to nothing or pushes the capsule past the pane's edges.
-    private var searchWidth: CGFloat {
-        let controls: CGFloat = 190
-        return min(220, max(96, slot.rect.width - controls - 60))
+    /// The stack cannot go — a layout needs somewhere for unpinned windows to
+    /// land — so the control says why rather than simply vanishing.
+    private var deleteButton: some View {
+        let isStack = slot.node.type == .stack
+        let stackLockHelp = "The stack can't be removed — every layout needs one"
+        return Button(action: onDelete) {
+            Image(systemName: "trash")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.primary.opacity(isStack ? 0.3 : 0.8))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color(nsColor: .windowBackgroundColor).opacity(0.95)))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+        }
+        .buttonStyle(.plain)
+        .disabled(isStack)
+        .help(isStack ? stackLockHelp : "Remove this cell")
+        .accessibilityLabel(paneLabel(isStack ? stackLockHelp : "Remove this cell"))
+        .opacity(isHovered ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 
-    /// Moved out of the chooser's scrolling list, where it scrolled away with
-    /// the very results it was filtering.
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary.opacity(0.5))
-
-            TextField("Search apps and windows", text: $query)
-                .accessibilityLabel("Search apps and windows")
-                .accessibilityIdentifier("chooser.search")
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-                .focused($searchFocused)
-                .onSubmit { chooseFirstMatch() }
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary.opacity(0.4))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .frame(width: searchWidth)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(Color.primary.opacity(0.08)))
-        .overlay(
-            Capsule().strokeBorder(
-                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
-                lineWidth: searchFocused ? 2 : 1
-            )
-        )
-        // Lets the window stand down from treating keystrokes as commands.
-        .onChange(of: searchFocused) { focused in onTextFocusChanged(focused) }
-        .onDisappear { onTextFocusChanged(false) }
-        // The window is retained between showings, so this would otherwise
-        // carry a stale query over from last time.
-        .onChange(of: sessionID) { _ in query = "" }
-    }
-
-    /// Return picks the obvious result: the single matching window if the query
-    /// narrowed to one, otherwise the first app still standing.
-    private func chooseFirstMatch() {
-        let matches = ChooserMatch.filtered(
-            ChooserMatch.groups(apps: runningApps, windows: windows),
-            query: query
-        )
-        guard let first = matches.first else { return }
-        if matches.count == 1, first.windows.count == 1 {
-            onChoose(first.windows[0])
-        } else {
-            onChooseApp(first.app)
-        }
+    /// Names an action for the pane it belongs to.
+    ///
+    /// The pane's number is no longer drawn anywhere, but every pane still
+    /// carries the same set of controls — so without this both VoiceOver and
+    /// anything driving the interface see four identical "New pane above"
+    /// buttons and cannot tell which is which.
+    private func paneLabel(_ action: String) -> String {
+        guard let addressLabel = slot.addressLabel else { return action }
+        return "\(action) — pane \(addressLabel)"
     }
 
     private var borderOpacity: Double {
@@ -1179,69 +1257,53 @@ private struct CellView: View {
                 .allowsHitTesting(false)
 
             // Even inset all round so the preview reads as the pane itself.
-            // The pane bar floats over it, as the controls are meant to — but
-            // the layout bar is opaque, so top panes inset past it instead.
+            // Top panes inset past the layout bar, which is opaque and sits
+            // over them.
             content
                 .padding(EdgeInsets(top: 30 + topInset, leading: 30, bottom: 30, trailing: 30))
 
-            VStack {
-                Spacer()
-                paneBar
+            if let hoveredSplit {
+                splitPreview(hoveredSplit)
             }
-            .padding(12)
+
+            splitButtons
+
+            // Top right, pushed clear of the layout bar the same way the top
+            // split button is. It sat in this corner once before and was hard
+            // to reach on any pane touching the top of the screen — but moving
+            // it to the bottom was treating the symptom; `topInset` is however
+            // far this pane reaches under the bar, and zero for the panes that
+            // do not.
+            deleteButton
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(6)
+                .padding(.top, topInset)
         }
         .animation(.easeOut(duration: 0.12), value: isDropTarget)
     }
 
-    @ViewBuilder
+    /// The same list for every pane, whatever it currently holds.
+    ///
+    /// The stack used to show its frontmost window and a count instead of a
+    /// list, which made it the one pane you could not change from its own
+    /// contents — its role lived in the pane bar, and with that gone it would
+    /// have been a one-way door. Its own view is the price of having a single
+    /// place where what a pane holds is decided.
     private var content: some View {
-        if windows.isEmpty {
-            EmptyCellHint(node: slot.node)
-        } else if slot.node.type == .stack {
-            // Only the frontmost window is showing in reality, so show only
-            // that — the glyph says the rest are behind it.
-            ZStack {
-                WindowTile(window: windows[0], fills: true)
-                    .onTapGesture { onChoose(windows[0]) }
-                StackGlyph(count: windows.count)
-            }
-        } else {
-            PaneChooser(
-                windows: windows,
-                apps: runningApps,
-                pinned: slot.node.pinned,
-                isEmpty: slot.node.type == .empty,
-                onChooseApp: onChooseApp,
-                onChooseWindow: onChoose,
-                onChooseEmpty: onChooseEmpty,
-                query: query
-            )
-        }
-    }
-}
-
-private struct EmptyCellHint: View {
-    let node: LayoutNode
-
-    var body: some View {
-        VStack(spacing: 6) {
-            switch node.type {
-            case .pinned:
-                Image(systemName: "pin.fill")
-                    .font(.system(size: 18))
-                Text(node.pinned?.application ?? node.pinned?.bundleId ?? "Pinned")
-                    .font(.system(size: 13, weight: .medium))
-            case .stack:
-                Image(systemName: "square.stack.3d.up.fill")
-                    .font(.system(size: 18))
-                Text("Everything else")
-                    .font(.system(size: 13, weight: .medium))
-            default:
-                Text("Drop a window")
-                    .font(.system(size: 13, weight: .medium))
-            }
-        }
-        .foregroundColor(.primary.opacity(0.45))
+        PaneChooser(
+            windows: windows,
+            apps: runningApps,
+            pinned: slot.node.pinned,
+            isEmpty: slot.node.type == .empty,
+            isStack: slot.node.type == .stack,
+            addressLabel: slot.addressLabel,
+            onChooseApp: onChooseApp,
+            onChooseWindow: onChoose,
+            onChooseEmpty: onChooseEmpty,
+            onChooseStack: onChooseStack,
+            onTextFocusChanged: onTextFocusChanged,
+            sessionID: sessionID
+        )
     }
 }
 
@@ -1288,209 +1350,6 @@ private enum ChooserMatch {
             return windowBundleId == bundleId
         }
         return window.application.localizedCaseInsensitiveCompare(app.name) == .orderedSame
-    }
-}
-
-// MARK: - Cell controls
-
-/// The editor, such as it is: a floating cluster of controls that sits on the
-/// cell it acts on. Nothing here lives in a panel or a sidebar. Always visible —
-/// the cell's address leads it, so the bar doubles as the cell's label.
-private struct CellControls: View {
-    @Environment(\.colorScheme) private var scheme
-
-    let addressLabel: String?
-    let node: LayoutNode
-    let canDelete: Bool
-    /// The cell's own size, which decides how much of the bar fits.
-    let cellSize: CGSize
-    let onSetType: (LayoutType) -> Void
-    let onSplit: (SplitAxis) -> Void
-    let onDelete: () -> Void
-
-    /// Names an action for the pane it belongs to. Every pane draws the same
-    /// row of controls, so without this both VoiceOver and anything driving the
-    /// interface see several identical "Split into columns" buttons and cannot
-    /// tell which is which.
-    private func paneLabel(_ action: String) -> String {
-        guard let addressLabel else { return action }
-        return "\(action) — pane \(addressLabel)"
-    }
-
-    /// Width the bar needs before it starts clipping: the address chip plus
-    /// five buttons and their dividers.
-    private var isCompact: Bool { cellSize.width < 240 || cellSize.height < 110 }
-
-    /// A layout needs somewhere for unpinned windows to land, so the stack can't
-    /// be converted or removed from here. Splitting it is fine — the stack
-    /// survives in one of the halves.
-    private var isStack: Bool { node.type == .stack }
-
-    private let stackLockHelp = "The stack can't be removed — every layout needs one"
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if let addressLabel {
-                Text(addressLabel)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
-                    .frame(minWidth: 26, minHeight: 26)
-                    .background(Capsule().fill(Color.primary.opacity(0.16)))
-                    .help("Press \(addressLabel) to send the focused window here")
-
-                separator
-            }
-
-            if isCompact {
-                overflowMenu
-            } else {
-                fullControls
-            }
-        }
-        // No ground of its own: these controls share the pane bar's capsule
-        // with the search field, and giving each its own would read as two
-        // separate floating objects rather than one bar.
-    }
-
-    private var separator: some View {
-        Divider()
-            .frame(height: 18)
-            .overlay(Color.primary.opacity(0.2))
-            .padding(.horizontal, 2)
-    }
-
-    // MARK: - Full bar
-    //
-    // Only the two roles a pane can play. Which app is pinned is chosen in the
-    // pane's own window grid, and shown there — not restated here.
-
-    @ViewBuilder
-    private var fullControls: some View {
-        OverlayIconButton(
-            systemName: "pin.fill",
-            help: isStack ? stackLockHelp : "Hold one app here",
-            axLabel: paneLabel(isStack ? stackLockHelp : "Hold one app here"),
-            active: node.type == .pinned
-        ) { onSetType(.pinned) }
-            .disabled(isStack)
-            .opacity(isStack ? 0.35 : 1)
-
-        OverlayIconButton(
-            systemName: "square.stack.3d.up.fill",
-            help: "Everything else lands here",
-            axLabel: paneLabel("Everything else lands here"),
-            active: isStack
-        ) { onSetType(.stack) }
-
-        separator
-
-        OverlayIconButton(
-            systemName: "rectangle.split.2x1",
-            help: "Split into columns",
-            axLabel: paneLabel("Split into columns")
-        ) { onSplit(.vertical) }
-        OverlayIconButton(
-            systemName: "rectangle.split.1x2",
-            help: "Split into rows",
-            axLabel: paneLabel("Split into rows")
-        ) { onSplit(.horizontal) }
-
-        if canDelete {
-            separator
-            OverlayIconButton(
-                systemName: "trash",
-                help: isStack ? stackLockHelp : "Remove this cell",
-                axLabel: paneLabel(isStack ? stackLockHelp : "Remove this cell"),
-                action: onDelete
-            )
-            .disabled(isStack)
-            .opacity(isStack ? 0.35 : 1)
-        }
-    }
-
-    // MARK: - Compact bar
-
-    /// Narrow cells get the same actions behind one button rather than a
-    /// clipped row — nothing is unreachable at any cell size.
-    private var overflowMenu: some View {
-        Menu {
-            Button {
-                onSetType(.pinned)
-            } label: {
-                Label("Hold One App Here",
-                      systemImage: node.type == .pinned ? "checkmark" : "pin.fill")
-            }
-            .disabled(isStack)
-
-            Button {
-                onSetType(.stack)
-            } label: {
-                Label("Everything Else Lands Here",
-                      systemImage: isStack ? "checkmark" : "square.stack.3d.up.fill")
-            }
-
-            Divider()
-
-            Button {
-                onSplit(.vertical)
-            } label: {
-                Label("Split into Columns", systemImage: "rectangle.split.2x1")
-            }
-            Button {
-                onSplit(.horizontal)
-            } label: {
-                Label("Split into Rows", systemImage: "rectangle.split.1x2")
-            }
-
-            if canDelete {
-                Divider()
-                Button(role: .destructive, action: onDelete) {
-                    Label("Remove Cell", systemImage: "trash")
-                }
-                .disabled(isStack)
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.primary)
-                .frame(width: 28, height: 26)
-                .background(Capsule().fill(Color.primary.opacity(0.1)))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-}
-
-private struct OverlayIconButton: View {
-    let systemName: String
-    let help: String
-    /// Spoken name, when it needs to differ from the tooltip — the pane controls
-    /// repeat across panes, so theirs say which pane they belong to.
-    var axLabel: String? = nil
-    var active: Bool = false
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary)
-                .frame(width: 28, height: 26)
-                .background(
-                    Capsule().fill(Color.primary.opacity(active ? 0.24 : hovering ? 0.14 : 0.0))
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(help)
-        // Without this these announce as their SF Symbol name — VoiceOver read
-        // one of them as "rectangle.split.2x1". The help text is already the
-        // sentence a person would use, so it serves as the label unless a
-        // caller needs something more specific.
-        .accessibilityLabel(axLabel ?? help)
     }
 }
 
@@ -1615,32 +1474,6 @@ private struct PaneDragPreview: View {
     }
 }
 
-/// Marks a cell as the stack and says how many windows are in it. Sits over the
-/// frontmost window's preview without intercepting it, so the tile underneath
-/// stays clickable and draggable.
-private struct StackGlyph: View {
-    @Environment(\.colorScheme) private var scheme
-
-    let count: Int
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Image(systemName: "square.stack.3d.up.fill")
-                .font(.system(size: 26, weight: .medium))
-            if count > 1 {
-                Text("\(count)")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-            }
-        }
-        .foregroundColor(.primary.opacity(0.92))
-        .frame(width: 62, height: 62)
-        .background(Circle().fill(scheme.ground.opacity(0.5)))
-        .overlay(Circle().strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
-        .shadow(color: .black.opacity(0.5), radius: 10, y: 3)
-        .allowsHitTesting(false)
-    }
-}
-
 /// Everything a pane can hold, grouped by app. Each app is one selectable box
 /// containing its windows, so choosing "Safari" is a single click rather than a
 /// hunt through a flat list of look-alike screenshots. Apps with many windows
@@ -1651,13 +1484,24 @@ private struct PaneChooser: View {
     let pinned: PinnedConfig?
     /// The pane holds nothing on purpose — the ghost box is its current choice.
     let isEmpty: Bool
+    /// This pane is where unpinned windows land.
+    let isStack: Bool
+    /// Names the two role boxes for their pane. Every pane draws the same list,
+    /// so without this both VoiceOver and anything driving the interface see
+    /// several identical "Stack" boxes and cannot tell which is which — the
+    /// same reason the pane controls carry it.
+    let addressLabel: String?
     let onChooseApp: (RunningAppInfo) -> Void
     let onChooseWindow: (WTWindow) -> Void
     let onChooseEmpty: () -> Void
-    /// What the pane bar's search field currently holds. Owned by `CellView`:
-    /// the field lives in the bar now, and the list it filters lives here, so
-    /// neither can be the one holding the state.
-    let query: String
+    let onChooseStack: () -> Void
+    /// Lets the window stand down from treating keystrokes as commands.
+    let onTextFocusChanged: (Bool) -> Void
+    /// Changes on each showing; the query is cleared when it does.
+    let sessionID: Int
+
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
 
     private let spacing: CGFloat = 12
     /// Padding inside an app box, both sides.
@@ -1673,44 +1517,224 @@ private struct PaneChooser: View {
             }
             let _ = RenderProbe.tally("PaneChooser")
 
-            ScrollView(showsIndicators: false) {
+            // The field is outside the scroll view, so it holds still while the
+            // list moves under it. Inside, it scrolled away with the results it
+            // was filtering, and every keystroke that changed the result count
+            // shifted it up or down the pane.
+            //
+            // It needs no inset of its own for the layout bar: the whole
+            // chooser is already padded past it by `topInset`, so the top of
+            // this stack is the top of the usable pane.
+            VStack(spacing: spacing) {
+                searchField
+
+                ScrollView(showsIndicators: false) {
                 // Lazy: a chooser lists every running app, but only a few rows
                 // are ever on screen. A plain VStack builds all of them —
                 // measured at 44 app groups and 51 window tiles for two panes,
                 // most of them scrolled out of sight.
                 LazyVStack(spacing: spacing) {
-                    EmptyChoiceBox(isCurrent: isEmpty)
-                        .onTapGesture(perform: onChooseEmpty)
-
                     // Boxes are as wide as their contents need, so they flow and
-                    // wrap rather than sitting in fixed columns.
+                    // wrap rather than sitting in fixed columns. The two roles
+                    // pack alongside the apps and lead the list.
                     ForEach(Array(rows(metrics: metrics).enumerated()), id: \.offset) { _, row in
                         HStack(alignment: .top, spacing: spacing) {
-                            ForEach(row) { group in
-                                let perRow = tilesPerRow(for: group, metrics: metrics)
-                                AppWindowGroup(
-                                    app: group.app,
-                                    windows: group.windows,
-                                    isCurrent: matchesPin(group.app),
-                                    tileWidth: metrics.tile,
-                                    tileGap: tileGap,
-                                    tilesPerRow: perRow,
-                                    pinned: matchesPin(group.app) ? pinned : nil,
-                                    onChooseApp: { onChooseApp(group.app) },
-                                    onChooseWindow: onChooseWindow
-                                )
-                                .frame(width: boxWidth(perRow: perRow, metrics: metrics))
+                            ForEach(row) { entry in
+                                box(for: entry, metrics: metrics)
+                                    .frame(width: width(of: entry, metrics: metrics))
+                                    // Every box takes the height of the tallest
+                                    // in its row. A role holds no windows, so
+                                    // left to itself it comes out the height of
+                                    // its two lines of text and sits noticeably
+                                    // short beside an app showing thumbnails.
+                                    .frame(maxHeight: .infinity)
                             }
                             Spacer(minLength: 0)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity)
-                // Floor the content at the pane's height so a chooser that fits
-                // sits centred; a taller one overflows this and just scrolls.
-                .frame(minHeight: geo.size.height, alignment: .center)
+                }
+                .mask(bottomFade)
             }
-            .frame(width: geo.size.width, height: geo.size.height)
+            // Top-aligned, not centred. The list used to be floored at the
+            // pane's height and centred within it, which meant it slid up and
+            // down as filtering changed how many rows there were — the results
+            // moved while you were typing at them.
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+            // The window is retained between showings, so this state would
+            // otherwise carry a stale query over from last time.
+            .onChange(of: sessionID) { _ in query = "" }
+        }
+    }
+
+    /// Softens the bottom edge of the scrolling list.
+    ///
+    /// A pane clips its content at its own edge, so a list longer than the pane
+    /// ended mid-row with a hard horizontal cut that read as the list finishing
+    /// rather than continuing. The fade says there is more below.
+    ///
+    /// A fixed height rather than a fraction of the pane: on a short pane a
+    /// proportional fade would swallow most of the last row, and on a tall one
+    /// it would be too gradual to notice. The nested reader is what makes that
+    /// possible — the gradient's stops are fractions, so turning points into
+    /// fractions needs the height it is actually being drawn at.
+    ///
+    /// Always applied, and invisible when it has nothing to do: a list that fits
+    /// leaves empty space at the bottom of the scroll view, and fading
+    /// transparency changes nothing.
+    private var bottomFade: some View {
+        GeometryReader { fade in
+            let height = max(fade.size.height, 1)
+            let start = max(0, 1 - Self.fadeHeight / height)
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: start),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    private static let fadeHeight: CGFloat = 28
+
+    /// Above the list it filters, and scrolling with it.
+    ///
+    /// It spent a while in the pane bar, which kept it in view but cost every
+    /// pane a permanent strip of chrome. With the bar gone it comes back here.
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary.opacity(0.5))
+
+            TextField("Search apps and windows", text: $query)
+                .accessibilityLabel("Search apps and windows")
+                .accessibilityIdentifier("chooser.search")
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(.primary)
+                .focused($searchFocused)
+                .onSubmit { chooseFirstMatch() }
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .overlay(
+            Capsule().strokeBorder(
+                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
+                lineWidth: searchFocused ? 2 : 1
+            )
+        )
+        .onChange(of: searchFocused) { focused in onTextFocusChanged(focused) }
+        .onDisappear { onTextFocusChanged(false) }
+    }
+
+    /// Return picks the obvious result: the single matching window if the query
+    /// narrowed to one, otherwise the first app still standing.
+    private func chooseFirstMatch() {
+        let matches = filteredGroups
+        guard let first = matches.first else { return }
+        if matches.count == 1, first.windows.count == 1 {
+            onChooseWindow(first.windows[0])
+        } else {
+            onChooseApp(first.app)
+        }
+    }
+
+    // MARK: - Entries
+
+    /// Everything the list can offer, in the order it is offered.
+    ///
+    /// The roles are entries like any other rather than a separate strip above
+    /// the apps: choosing what a pane holds is one decision, and splitting the
+    /// choices into two differently-shaped lists made "Stack" look like a mode
+    /// switch rather than one of the things a pane can be.
+    enum Entry: Identifiable {
+        case stack
+        case empty
+        case app(ChooserMatch.Group)
+
+        var id: String {
+            switch self {
+            case .stack:          return "role.stack"
+            case .empty:          return "role.empty"
+            case .app(let group): return "app.\(group.id)"
+            }
+        }
+    }
+
+    /// Roles first, then the pane's current pin, then everything else.
+    ///
+    /// What the pane holds right now is the entry you are most likely to be
+    /// looking for — to see what it is, or to change it — so it does not sit
+    /// wherever the alphabet happens to put it.
+    private var entries: [Entry] {
+        let groups = filteredGroups
+        let current = groups.filter { matchesPin($0.app) }
+        let rest = groups.filter { !matchesPin($0.app) }
+        return [.stack, .empty] + (current + rest).map(Entry.app)
+    }
+
+    @ViewBuilder
+    private func box(for entry: Entry, metrics: Metrics) -> some View {
+        switch entry {
+        case .stack:
+            RoleChoiceBox(
+                systemName: "square.stack.3d.up.fill",
+                title: "Stack",
+                detail: "everything else lands here",
+                isCurrent: isStack,
+                axLabel: roleLabel("Stack"),
+                action: onChooseStack
+            )
+        case .empty:
+            RoleChoiceBox(
+                systemName: "square.dashed",
+                title: "Empty",
+                detail: "leave this pane unassigned",
+                isCurrent: isEmpty,
+                axLabel: roleLabel("Empty"),
+                action: onChooseEmpty
+            )
+        case .app(let group):
+            AppWindowGroup(
+                app: group.app,
+                windows: group.windows,
+                isCurrent: matchesPin(group.app),
+                tileWidth: metrics.tile,
+                tileGap: tileGap,
+                tilesPerRow: tilesPerRow(for: group, metrics: metrics),
+                pinned: matchesPin(group.app) ? pinned : nil,
+                onChooseApp: { onChooseApp(group.app) },
+                onChooseWindow: onChooseWindow
+            )
+        }
+    }
+
+    /// A role box holds no windows, so it takes the width of a one-tile box —
+    /// the same width an app with nothing open gets.
+    private func width(of entry: Entry, metrics: Metrics) -> CGFloat {
+        switch entry {
+        case .stack, .empty:
+            return boxWidth(perRow: 1, metrics: metrics)
+        case .app(let group):
+            return boxWidth(perRow: tilesPerRow(for: group, metrics: metrics), metrics: metrics)
         }
     }
 
@@ -1745,13 +1769,13 @@ private struct PaneChooser: View {
 
     /// Greedy left-to-right packing: a box joins the current row if it fits,
     /// otherwise it starts the next one.
-    private func rows(metrics: Metrics) -> [[AppGroup]] {
-        var rows: [[AppGroup]] = []
-        var current: [AppGroup] = []
+    private func rows(metrics: Metrics) -> [[Entry]] {
+        var rows: [[Entry]] = []
+        var current: [Entry] = []
         var used: CGFloat = 0
 
-        for group in filteredGroups {
-            let width = boxWidth(perRow: tilesPerRow(for: group, metrics: metrics), metrics: metrics)
+        for entry in entries {
+            let width = width(of: entry, metrics: metrics)
             let needed = current.isEmpty ? width : used + spacing + width
             if !current.isEmpty, needed > metrics.available {
                 rows.append(current)
@@ -1759,13 +1783,18 @@ private struct PaneChooser: View {
                 used = 0
             }
             used = current.isEmpty ? width : used + spacing + width
-            current.append(group)
+            current.append(entry)
         }
         if !current.isEmpty { rows.append(current) }
         return rows
     }
 
     // MARK: - Search
+
+    private func roleLabel(_ role: String) -> String {
+        guard let addressLabel else { return role }
+        return "\(role) — pane \(addressLabel)"
+    }
 
     // MARK: - Grouping
 
@@ -1854,7 +1883,7 @@ private struct AppWindowGroup: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(
@@ -1938,37 +1967,74 @@ private struct AppWindowGroup: View {
 }
 
 /// The "leave it empty" option, shaped like an app box so it reads as a peer.
-private struct EmptyChoiceBox: View {
+/// One non-app choice in a pane's list: the stack, or empty.
+///
+/// Wears the app box's chrome exactly — same padding, corner, fill, border and
+/// hover response — because it is the same kind of thing: one of the options for
+/// what this pane holds. Dressing the roles differently made them read as a
+/// setting that happened to be nearby rather than as entries in the list.
+///
+/// Still a real Button underneath, where the app box uses a tap gesture. These
+/// carry the pane's role and the interface tests press them, and a tap gesture
+/// is not something `AXUIElementPerformAction` can drive.
+private struct RoleChoiceBox: View {
+    let systemName: String
+    let title: String
+    let detail: String
     let isCurrent: Bool
+    let axLabel: String
+    let action: () -> Void
+
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "square.dashed")
-                .font(.system(size: 13))
-                .frame(width: 20, height: 20)
-            Text("Empty")
-                .font(.system(size: 13, weight: .semibold))
-            Text("leave this pane unassigned")
-                .font(.system(size: 11))
-                .foregroundColor(.primary.opacity(0.45))
-            Spacer(minLength: 0)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: systemName)
+                        .font(.system(size: 14))
+                        .foregroundColor(.primary)
+                        .frame(width: 20, height: 20)
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+
+                // Sits where an app box puts "No open windows", so the two are
+                // the same height when neither has anything to show.
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(.primary.opacity(0.4))
+                    .lineLimit(1)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(
+                        isCurrent ? Color.accentColor.opacity(0.22)
+                            : hovering ? Color.accentColor.opacity(0.12)
+                            : Color.primary.opacity(0.05)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(
+                        isCurrent ? Color.accentColor
+                            : hovering ? Color.accentColor.opacity(0.7)
+                            : Color.primary.opacity(0.15),
+                        lineWidth: isCurrent || hovering ? 3 : 1
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14))
         }
-        .foregroundColor(.primary)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(isCurrent ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.03))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(
-                    isCurrent ? Color.accentColor : Color.primary.opacity(0.25),
-                    style: StrokeStyle(lineWidth: isCurrent ? 3 : 1, dash: isCurrent ? [] : [6, 4])
-                )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(axLabel)
         .animation(.easeOut(duration: 0.12), value: isCurrent)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

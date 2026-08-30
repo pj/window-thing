@@ -13,7 +13,12 @@ launch_with_surface || return 0
 setup_chooser_pane "Chooser Scratch" || return 0
 
 expect_control "All windows of TextEdit" "running apps appear as choosable boxes"
-expect_control "Empty"                   "the empty option is offered alongside them"
+
+# The two roles a pane can play lead the list, above the apps. Both are named
+# for their pane: every pane draws the same list, so a bare "Empty" would be
+# several identical controls with no way to say which one is meant.
+expect_control "Empty — pane 2" "the empty option is offered alongside them"
+expect_control "Stack — pane 2" "and so is the stack"
 
 info "Chooser: searching narrows it"
 drive type "Search apps and windows" "TextEdit"

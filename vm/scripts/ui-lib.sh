@@ -251,7 +251,7 @@ setup_chooser_pane() {
     drive confirm || return 1
     $AX wait "Delete layout $name" 10 >/dev/null 2>&1
 
-    $AX press "Split into columns — pane 1" >/dev/null 2>&1
+    $AX press "Split into columns, from the top — pane 1" >/dev/null 2>&1
 
     if ! $AX wait "Search apps and windows" 10 >/dev/null 2>&1; then
         # Distinguish the two ways this goes wrong. If the surface has gone
