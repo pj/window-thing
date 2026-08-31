@@ -213,35 +213,30 @@ struct TestFixtures {
     static let halfSplitLayout = Layout(
         name: "Half Split",
         quickKey: "1",
-        screenSets: [
-            ScreenConfig(layouts: [
+        screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 50),
                     .empty(percentage: 50)
                 ])
             ])
-        ]
     )
 
     static let thirdsLayout = Layout(
         name: "Thirds",
         quickKey: "2",
-        screenSets: [
-            ScreenConfig(layouts: [
+        screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 33.33),
                     .empty(percentage: 33.33),
                     .empty(percentage: 33.34)
                 ])
             ])
-        ]
     )
 
     static let codingLayout = Layout(
         name: "Coding",
         quickKey: "c",
-        screenSets: [
-            ScreenConfig(layouts: [
+        screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: nil, bundleId: "com.microsoft.VSCode", percentage: 60),
                     .rows([
@@ -250,34 +245,29 @@ struct TestFixtures {
                     ])
                 ])
             ])
-        ]
     )
 
     static let dualDisplayLayout = Layout(
         name: "Dual Setup",
         quickKey: "d",
-        screenSets: [
-            ScreenConfig(layouts: [
+        screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: nil, bundleId: "com.microsoft.VSCode"),
                 "External Display": .columns([
                     .pinned(app: "Terminal", percentage: 50),
                     .pinned(app: "Safari", percentage: 50)
                 ])
             ])
-        ]
     )
 
     static let stackLayout = Layout(
         name: "Stack Layout",
         quickKey: "s",
-        screenSets: [
-            ScreenConfig(layouts: [
+        screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stack([
                     PinnedConfig(application: "Safari", bundleId: nil, windowTitles: nil),
                     PinnedConfig(application: "Finder", bundleId: nil, windowTitles: nil)
                 ])
             ])
-        ]
     )
 }
 

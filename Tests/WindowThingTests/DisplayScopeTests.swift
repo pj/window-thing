@@ -208,9 +208,7 @@ struct DisplayScopeTests {
 
     @Test("A layout with no scope recorded behaves as shared")
     func defaultsToShared() {
-        let layout = Layout(name: "Test", screenSets: [
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        ])
+        let layout = Layout(name: "Test", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
         #expect(layout.effectiveDisplayScope == .shared)
     }
 
@@ -218,7 +216,7 @@ struct DisplayScopeTests {
     func scopeIsCodable() throws {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])],
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]),
             displayScope: .perMonitor
         )
 

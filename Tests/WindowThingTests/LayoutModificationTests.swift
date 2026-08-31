@@ -337,14 +337,12 @@ struct LayoutModificationTests {
         // Create a layout with no stack - just pinned and empty cells
         let layout = Layout(
             name: "No Stack Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .pinned(app: "VSCode", percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
 
         // Remove a column
@@ -355,7 +353,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
 
         // Should still have a valid layout, even without a stack
         #expect(primaryLayout != nil)
@@ -368,11 +366,9 @@ struct LayoutModificationTests {
         // A screen with just an empty node should work fine
         let layout = Layout(
             name: "Empty Screen",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .empty(percentage: 100)
                 ])
-            ]
         )
 
         let mockWindowManager = MockWindowManager()
@@ -499,14 +495,12 @@ struct LayoutModificationTests {
     func moveApplicationFromStackToPinned() {
         let layout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         LayoutNode(type: .stack, percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
 
         let result = layout.movingApplication(
@@ -517,7 +511,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.nodeAt(path: [1])?.type == .pinned)
     }
 
@@ -525,14 +519,12 @@ struct LayoutModificationTests {
     func moveApplicationFromPinnedToStack() {
         let layout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         LayoutNode(type: .stack, percentage: 50),
                         .pinned(app: "Terminal", percentage: 50)
                     ])
                 ])
-            ]
         )
 
         let result = layout.movingApplication(
@@ -543,7 +535,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.nodeAt(path: [1])?.type == .empty)
     }
 
@@ -551,14 +543,12 @@ struct LayoutModificationTests {
     func removePinnedWindowSetsToEmpty() {
         let layout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .pinned(app: "VSCode", bundleId: nil, percentage: 50),
                         .pinned(app: "Terminal", percentage: 50)
                     ])
                 ])
-            ]
         )
 
         let result = layout.removingPinnedAt(
@@ -567,7 +557,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.nodeAt(path: [1])?.type == .empty)
     }
 
@@ -575,14 +565,12 @@ struct LayoutModificationTests {
     func insertColumnInLayout() {
         let layout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
 
         let result = layout.insertingColumn(
@@ -593,7 +581,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.columns?.count == 3)
         #expect(primaryLayout?.nodeAt(path: [1])?.type == .pinned)
     }
@@ -602,15 +590,13 @@ struct LayoutModificationTests {
     func removeColumnFromLayout() {
         let layout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .empty(percentage: 33),
                         .pinned(app: "Terminal", percentage: 33),
                         .empty(percentage: 34)
                     ])
                 ])
-            ]
         )
 
         let result = layout.removingColumn(
@@ -620,7 +606,7 @@ struct LayoutModificationTests {
         )
 
         #expect(result.changed == true)
-        let primaryLayout = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = result.layout.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.columns?.count == 2)
     }
 }
@@ -640,14 +626,12 @@ struct LayoutManagerDynamicModificationTests {
 
         let initialLayout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         LayoutNode(type: .stack, percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
 
         layoutManager.loadLayouts(from: AppConfig(
@@ -670,7 +654,7 @@ struct LayoutManagerDynamicModificationTests {
         )
 
         #expect(success == true)
-        let primaryLayout = layoutManager.currentLayout?.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = layoutManager.currentLayout?.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.nodeAt(path: [1])?.type == .pinned)
     }
 
@@ -684,14 +668,12 @@ struct LayoutManagerDynamicModificationTests {
 
         let initialLayout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .pinned(app: "VSCode", bundleId: nil, percentage: 50),
                         .pinned(app: "Terminal", percentage: 50)
                     ])
                 ])
-            ]
         )
 
         layoutManager.loadLayouts(from: AppConfig(
@@ -729,14 +711,12 @@ struct LayoutManagerDynamicModificationTests {
 
         let initialLayout = Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode.columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
 
         layoutManager.loadLayouts(from: AppConfig(
@@ -759,7 +739,7 @@ struct LayoutManagerDynamicModificationTests {
         )
 
         #expect(success == true)
-        let primaryLayout = layoutManager.currentLayout?.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primaryLayout = layoutManager.currentLayout?.screens.layouts[ScreenConfig.primaryKey]
         #expect(primaryLayout?.columns?.count == 3)
     }
 }

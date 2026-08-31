@@ -361,12 +361,12 @@ struct LayoutModificationExtendedTests {
     func movingApplicationPinnedToNew() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: "Terminal", percentage: 50),
                     LayoutNode(type: .stack, percentage: 50)
                 ])
-            ])]
+            ])
         )
         let result = layout.movingApplication(
             monitor: ScreenConfig.primaryKey,
@@ -376,7 +376,7 @@ struct LayoutModificationExtendedTests {
         )
         #expect(result.changed == true)
         // Terminal should now be at path [1]
-        let primary = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primary = result.layout.screens.layouts[ScreenConfig.primaryKey]
         let targetNode = primary?.nodeAt(path: [1])
         #expect(targetNode?.type == .pinned)
         #expect(targetNode?.pinned?.application == "Terminal")
@@ -386,12 +386,12 @@ struct LayoutModificationExtendedTests {
     func movingApplicationFromStack() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 50),
                     LayoutNode(type: .stack, percentage: 50)
                 ])
-            ])]
+            ])
         )
         // App is in the stack (not pinned anywhere), move to cell [0]
         let result = layout.movingApplication(
@@ -401,7 +401,7 @@ struct LayoutModificationExtendedTests {
             to: [0]
         )
         #expect(result.changed == true)
-        let primary = result.layout.screenSets.first?.layouts[ScreenConfig.primaryKey]
+        let primary = result.layout.screens.layouts[ScreenConfig.primaryKey]
         let targetNode = primary?.nodeAt(path: [0])
         #expect(targetNode?.type == .pinned)
         #expect(targetNode?.pinned?.application == "Safari")
@@ -409,7 +409,7 @@ struct LayoutModificationExtendedTests {
 
     @Test("movingApplication with no screen sets returns unchanged")
     func movingApplicationNoScreenSets() {
-        let layout = Layout(name: "Empty", screenSets: [])
+        let layout = Layout(name: "Empty")
         let result = layout.movingApplication(
             monitor: ScreenConfig.primaryKey,
             applicationName: "Terminal",
@@ -423,9 +423,9 @@ struct LayoutModificationExtendedTests {
     func movingApplicationInvalidMonitor() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .empty()
-            ])]
+            ])
         )
         let result = layout.movingApplication(
             monitor: "Nonexistent",
@@ -440,12 +440,12 @@ struct LayoutModificationExtendedTests {
     func movingApplicationFromTo() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: "Terminal", percentage: 50),
                     LayoutNode(type: .stack, percentage: 50)
                 ])
-            ])]
+            ])
         )
         let from = LayoutLocation(monitor: ScreenConfig.primaryKey, path: [0])
         let to = LayoutLocation(monitor: ScreenConfig.primaryKey, path: [1])
@@ -462,10 +462,10 @@ struct LayoutModificationExtendedTests {
     func movingApplicationCrossMonitor() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .empty(),
                 "External": .empty()
-            ])]
+            ])
         )
         let from = LayoutLocation(monitor: ScreenConfig.primaryKey, path: [])
         let to = LayoutLocation(monitor: "External", path: [])

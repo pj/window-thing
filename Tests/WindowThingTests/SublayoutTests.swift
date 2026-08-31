@@ -292,12 +292,12 @@ struct CellIndexerSubCellTests {
         ]))
         let layout = Layout(
             name: "With Sublayout",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: "Terminal", bundleId: "com.apple.Terminal", percentage: 50, sublayout: sub),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(cellMap.cells.count == 2)
@@ -310,28 +310,31 @@ struct CellIndexerSubCellTests {
     func indexAllCellsWithoutSublayouts() {
         let layout = Layout(
             name: "No Sublayout",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: "Terminal", percentage: 50),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(cellMap.cells.count == 2)
         #expect(cellMap.subCells.isEmpty)
     }
 
-    @Test("indexAllCells with no matching screen set returns empty map")
+    @Test("A layout naming only absent displays still indexes the fallback")
     func indexAllCellsNoMatch() {
         let layout = Layout(
             name: "NoMatch",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 "Unknown": .empty()
-            ])]
+            ])
         )
+        // Nothing this layout names is attached, so it gives way to a
+        // fullscreen stack rather than describing no screen at all.
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
-        #expect(cellMap.cells.isEmpty)
+        #expect(cellMap.cells.count == 1)
+        #expect(cellMap.cells.first?.displayName == "Main Display")
         #expect(cellMap.subCells.isEmpty)
     }
 
@@ -343,9 +346,9 @@ struct CellIndexerSubCellTests {
         ]))
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: "Terminal", sublayout: sub)
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
         let addr = SubCellAddress(parent: .numeric(1), subIndex: 2)
@@ -358,9 +361,9 @@ struct CellIndexerSubCellTests {
     func cellMapCellLookup() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([.empty(percentage: 50), .empty(percentage: 50)])
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(cellMap.cell(at: .numeric(1)) != nil)
@@ -373,12 +376,12 @@ struct CellIndexerSubCellTests {
         let sub = SublayoutConfig(driverType: "tmux", layout: .columns([.empty(), .empty()]))
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .pinned(app: "Terminal", percentage: 50, sublayout: sub),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(cellMap.hasSubCells(at: .numeric(1)) == true)
@@ -393,7 +396,7 @@ struct CellIndexerSubCellTests {
         ]))
         let layout = Layout(
             name: "Dual",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: "Terminal", sublayout: sub),
                 "External Display": .columns([
                     .pinned(app: "VSCode", percentage: 50, sublayout: SublayoutConfig(
@@ -402,7 +405,7 @@ struct CellIndexerSubCellTests {
                     )),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let cellMap = CellIndexer.indexAllCells(layout: layout, displays: TestFixtures.dualDisplays)
         // Cell 1: Terminal on main (has 2 sub-cells from rows sublayout)

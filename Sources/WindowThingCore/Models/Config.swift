@@ -95,42 +95,35 @@ public struct AppConfig: Codable, Sendable {
                 Layout(
                     name: "Fullscreen",
                     quickKey: "z",
-                    screenSets: [
-                        ScreenConfig(layouts: [
+                    screens: ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .stackAll()
-                        ])
-                    ]
+                    ])
                 ),
                 Layout(
                     name: "Half Split",
                     quickKey: "1",
-                    screenSets: [
-                        ScreenConfig(layouts: [
+                    screens: ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
                                 .stackAll(percentage: 50),
                                 .empty(percentage: 50)
                             ])
-                        ])
-                    ]
+                    ])
                 ),
                 Layout(
                     name: "Thirds",
                     quickKey: "2",
-                    screenSets: [
-                        ScreenConfig(layouts: [
+                    screens: ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
                                 .stackAll(percentage: 33.33),
                                 .empty(percentage: 33.33),
                                 .empty(percentage: 33.34)
                             ])
-                        ])
-                    ]
+                    ])
                 ),
                 Layout(
                     name: "Main + Side",
                     quickKey: "3",
-                    screenSets: [
-                        ScreenConfig(layouts: [
+                    screens: ScreenConfig(layouts: [
                             ScreenConfig.primaryKey: .columns([
                                 .stackAll(percentage: 70),
                                 .rows([
@@ -138,8 +131,7 @@ public struct AppConfig: Codable, Sendable {
                                     .empty(percentage: 50)
                                 ])
                             ])
-                        ])
-                    ]
+                    ])
                 )
             ],
             defaultLayoutName: nil,

@@ -1,7 +1,11 @@
 import Foundation
 
-/// Pure functions for editing screen sets (adding, removing, renaming display keys).
-public enum ScreenSetModification {
+/// Pure functions for editing a layout's display map — adding, removing and
+/// renaming the display keys it holds.
+///
+/// These used to operate on one screen set chosen out of several. There is only
+/// one map now, so the index is gone; what they do to it is unchanged.
+public enum ScreenModification {
 
     /// The standard default layout node for a newly-added display.
     public static var defaultDisplayNode: LayoutNode { .stackAll() }
@@ -48,74 +52,55 @@ public enum ScreenSetModification {
 
 // MARK: - Layout Convenience Extensions
 
-extension Layout {
-    /// Return a copy with a new display key added to the screen set at `index`.
-    public func addingDisplay(
-        key: String,
-        defaultNode: LayoutNode = .stackAll(),
-        toScreenSetAt index: Int
-    ) -> Layout? {
-        guard index >= 0 && index < screenSets.count else { return nil }
+public extension Layout {
+
+    /// Give a display its own tree in this layout.
+    ///
+    /// Adding a display used to mean picking which of a layout's screen sets to
+    /// add it to. With one map there is nothing to pick.
+    func addingDisplay(key: String, defaultNode: LayoutNode = .stackAll()) -> Layout {
         var copy = self
-        copy.screenSets[index] = ScreenSetModification.addDisplay(
-            key: key, defaultNode: defaultNode, to: screenSets[index]
-        )
+        copy.screens = ScreenModification.addDisplay(key: key, defaultNode: defaultNode, to: screens)
         return copy
     }
 
-    /// Return a copy with a display key removed from the screen set at `index`.
-    /// Returns nil if the key doesn't exist in that screen set.
-    public func removingDisplay(
-        key: String,
-        fromScreenSetAt index: Int
-    ) -> Layout? {
-        guard index >= 0 && index < screenSets.count,
-              let updated = ScreenSetModification.removeDisplay(key: key, from: screenSets[index])
-        else { return nil }
+    func removingDisplay(key: String) -> Layout? {
+        guard let updated = ScreenModification.removeDisplay(key: key, from: screens) else {
+            return nil
+        }
         var copy = self
-        copy.screenSets[index] = updated
+        copy.screens = updated
         return copy
     }
 
-    /// Return a copy with a display key renamed in the screen set at `index`.
-    /// Returns nil if oldKey doesn't exist or newKey already exists.
-    public func renamingDisplay(
-        from oldKey: String,
-        to newKey: String,
-        inScreenSetAt index: Int
-    ) -> Layout? {
-        guard index >= 0 && index < screenSets.count,
-              let updated = ScreenSetModification.renameDisplay(from: oldKey, to: newKey, in: screenSets[index])
-        else { return nil }
+    func renamingDisplay(from oldKey: String, to newKey: String) -> Layout? {
+        guard let updated = ScreenModification.renameDisplay(from: oldKey, to: newKey, in: screens) else {
+            return nil
+        }
         var copy = self
-        copy.screenSets[index] = updated
+        copy.screens = updated
         return copy
     }
 }
 
-// MARK: - Stack invariant
+// MARK: - The one-stack invariant
 
 public extension ScreenConfig {
-    /// Every monitor holding a stack. A layout is meant to have exactly one
-    /// across all its displays — that single stack is where unpinned windows go.
+    /// Display keys whose tree holds a stack.
     var stackKeys: [String] {
-        layouts
-            .filter { $0.value.findStackLocation() != nil }
-            .keys
-            .sorted { lhs, _ in lhs == ScreenConfig.primaryKey }
+        layouts.filter { $0.value.containsStack }.keys.sorted()
     }
 
+    /// Whether this layout has somewhere for unpinned windows to land.
     var containsStack: Bool { !stackKeys.isEmpty }
 
-    /// A copy with any surplus stacks demoted to empty panes, keeping one.
-    ///
-    /// The primary display keeps it when it has one, since that's where it
-    /// usually belongs; otherwise the first monitor holding one does.
+    /// A layout needs exactly one stack: two would both claim every unpinned
+    /// window. Older versions could write a second — notably when adding a
+    /// display, which used to default the new monitor to a full stack.
     func deduplicatingStacks() -> ScreenConfig {
         let keys = stackKeys
         guard keys.count > 1 else { return self }
 
-        let keeper = keys[0]
         var copy = self
         for key in keys.dropFirst() {
             guard let node = copy.layouts[key],
@@ -132,10 +117,23 @@ public extension ScreenConfig {
 }
 
 public extension Layout {
-    /// A copy with the one-stack-per-screen-set invariant restored.
     func deduplicatingStacks() -> Layout {
         var copy = self
-        copy.screenSets = screenSets.map { $0.deduplicatingStacks() }
+        copy.screens = screens.deduplicatingStacks()
+        return copy
+    }
+
+    /// Every layout has a tree for the main display, so every layout applies.
+    ///
+    /// The stack can sit on a secondary display, and `ScreenConfig.resolved`
+    /// falls all the way back to a fullscreen stack when that display is gone.
+    /// This makes the common case not need that: whatever else is unplugged,
+    /// there is always something on the screen you are definitely looking at.
+    func ensuringPrimaryDisplay() -> Layout {
+        guard screens.layouts[ScreenConfig.primaryKey] == nil else { return self }
+        var copy = self
+        copy.screens.layouts[ScreenConfig.primaryKey] =
+            screens.containsStack ? .empty() : .stackAll()
         return copy
     }
 }

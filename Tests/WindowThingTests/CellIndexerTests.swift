@@ -34,12 +34,12 @@ struct CellIndexerTests {
     func ghostPositionsCount() {
         let layout = Layout(
             name: "Simple",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 50),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(ghosts.count == 2)
@@ -51,10 +51,10 @@ struct CellIndexerTests {
     func ghostPositionsDualDisplay() {
         let layout = Layout(
             name: "Dual",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .empty(),
                 "External Display": .empty()
-            ])]
+            ])
         )
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.dualDisplays)
         #expect(ghosts.count == 4)
@@ -73,7 +73,7 @@ struct CellIndexerTests {
         // 6 columns = each 16.7%. Adding a 7th would be 14.3% < 15% min
         let layout = Layout(
             name: "ManyColumns",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 16.7),
                     .empty(percentage: 16.7),
@@ -82,7 +82,7 @@ struct CellIndexerTests {
                     .empty(percentage: 16.7),
                     .empty(percentage: 16.5)
                 ])
-            ])]
+            ])
         )
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
         let colGhost = ghosts.first { $0.direction == .trailingColumn }!
@@ -94,7 +94,7 @@ struct CellIndexerTests {
         // 6 rows = each 16.7%. Adding a 7th would be 14.3% < 15% min
         let layout = Layout(
             name: "ManyRows",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .rows([
                     .empty(percentage: 16.7),
                     .empty(percentage: 16.7),
@@ -103,7 +103,7 @@ struct CellIndexerTests {
                     .empty(percentage: 16.7),
                     .empty(percentage: 16.5)
                 ])
-            ])]
+            ])
         )
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
         let rowGhost = ghosts.first { $0.direction == .trailingRow }!
@@ -114,9 +114,9 @@ struct CellIndexerTests {
     func ghostNotDisabledForLeaf() {
         let layout = Layout(
             name: "Single",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .empty()
-            ])]
+            ])
         )
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
         #expect(ghosts[0].isDisabled == false)  // column ghost
@@ -127,12 +127,12 @@ struct CellIndexerTests {
     func ghostFramesWithinDisplay() {
         let layout = Layout(
             name: "Simple",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .empty(percentage: 50),
                     .empty(percentage: 50)
                 ])
-            ])]
+            ])
         )
         let display = TestFixtures.singleDisplay[0]
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
@@ -145,15 +145,17 @@ struct CellIndexerTests {
         }
     }
 
-    @Test("ghostPositions returns empty when no matching screen set")
+    @Test("A layout naming only absent displays falls back, and the fallback has ghosts")
     func ghostPositionsNoMatch() {
         let layout = Layout(
             name: "NoMatch",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 "Unknown Monitor": .empty()
-            ])]
+            ])
         )
+        // The fallback is a single fullscreen stack on the main display, which
+        // can be extended like any other pane.
         let ghosts = CellIndexer.ghostPositions(layout: layout, displays: TestFixtures.singleDisplay)
-        #expect(ghosts.isEmpty)
+        #expect(ghosts.allSatisfy { $0.displayName == "Main Display" })
     }
 }

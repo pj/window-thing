@@ -16,9 +16,9 @@ struct DisplayResolutionTests {
         ]
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: nil, bundleId: "com.microsoft.VSCode")
-            ])]
+            ])
         )
         let placements = LayoutCalculator.calculatePlacements(
             layout: layout,
@@ -36,9 +36,9 @@ struct DisplayResolutionTests {
     func primaryFollowsMainChange() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: nil, bundleId: "com.microsoft.VSCode")
-            ])]
+            ])
         )
 
         // First: main is display A
@@ -70,10 +70,10 @@ struct DisplayResolutionTests {
     func caseSensitiveMatching() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stackAll(),
                 "External Display": .pinned(app: "Safari")
-            ])]
+            ])
         )
         // Display name is lowercase — should NOT match "External Display"
         let displays = [
@@ -81,40 +81,42 @@ struct DisplayResolutionTests {
             Display.testDisplay(id: 1, name: "external display", x: 1920, width: 1920, height: 1080, isMain: false)
         ]
 
-        // The screen set references "External Display" which doesn't exist (case mismatch)
-        // matchingScreenSet should not match this screen set since it requires "External Display"
-        let match = layout.matchingScreenSet(for: displays)
-        // It should still match (since $PRIMARY matches) but won't use the external layout
-        // Actually: screenSetNames = {"External Display"}, displayNames = {"Main Display", "external display"}
-        // "External Display" is NOT a subset of displayNames, so this screen set should NOT match
-        #expect(match == nil)
+        // Display names are matched exactly: "external display" is not
+        // "External Display", so that key is treated as unplugged and dropped.
+        // The layout still applies — the primary is there — it just does
+        // nothing to the display it could not name.
+        let match = layout.screens.resolved(for: displays)
+        #expect(match.layouts["External Display"] == nil)
+        #expect(match.layouts[ScreenConfig.primaryKey] != nil)
     }
 
     @Test("Multiple displays none matching any non-primary key")
     func noNamedKeysMatch() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([.empty(percentage: 50), .stackAll(percentage: 50)]),
                 "Unknown Monitor": .pinned(app: "Safari")
-            ])]
+            ])
         )
         let displays = [
             Display.testDisplay(id: 0, name: "Main Display", width: 1920, height: 1080, isMain: true),
             Display.testDisplay(id: 1, name: "Side Monitor", x: 1920, width: 1920, height: 1080, isMain: false)
         ]
-        // "Unknown Monitor" not in display list → screen set doesn't match
-        let match = layout.matchingScreenSet(for: displays)
-        #expect(match == nil)
+        // "Unknown Monitor" is not plugged in, so its tree is dropped and the
+        // rest of the layout still applies.
+        let match = layout.screens.resolved(for: displays)
+        #expect(match.layouts["Unknown Monitor"] == nil)
+        #expect(match.layouts[ScreenConfig.primaryKey] != nil)
     }
 
     @Test("Display with no isMain flag degrades gracefully")
     func noMainDisplay() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: nil, bundleId: "com.microsoft.VSCode")
-            ])]
+            ])
         )
         // All displays have isMain: false
         let displays = [
@@ -135,10 +137,10 @@ struct DisplayResolutionTests {
     func primaryAndNamedResolve() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .pinned(app: nil, bundleId: "com.microsoft.VSCode"),
                 "External Display": .pinned(app: nil, bundleId: "com.apple.Safari")
-            ])]
+            ])
         )
         let placements = LayoutCalculator.calculatePlacements(
             layout: layout, displays: TestFixtures.dualDisplays, windows: TestFixtures.typicalWindows
@@ -163,14 +165,13 @@ struct DisplayResolutionTests {
         ]
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stackAll(),
                 displayName: .pinned(app: nil, bundleId: "com.apple.Safari")
-            ])]
+            ])
         )
-        let match = layout.matchingScreenSet(for: displays)
-        #expect(match != nil)
-        #expect(match!.layouts[displayName] != nil)
+        let match = layout.screens.resolved(for: displays)
+        #expect(match.layouts[displayName] != nil)
 
         let placements = LayoutCalculator.calculatePlacements(
             layout: layout, displays: displays, windows: TestFixtures.typicalWindows

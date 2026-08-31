@@ -147,8 +147,7 @@ extension NSImage {
             bezelPath.stroke()
 
             // Get the primary display's layout
-            guard let screenSet = layout.screenSets.first,
-                  let primaryLayout = screenSet.layouts[ScreenConfig.primaryKey] else {
+            guard let primaryLayout = layout.screens.layouts[ScreenConfig.primaryKey] else {
                 return true
             }
 

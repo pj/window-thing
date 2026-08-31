@@ -141,7 +141,8 @@ struct QuickMoveCard: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(Color.secondary.opacity(0.1))
-                    if let screenSet = layout.screenSets.first {
+                    do {
+                        let screenSet = layout.screens
                         MultiMonitorPreviewView(
                             screenConfig: screenSet,
                             graphicSize: CGSize(width: 126, height: 68)

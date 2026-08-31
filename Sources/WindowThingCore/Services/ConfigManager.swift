@@ -145,82 +145,82 @@ extension ConfigManager {
         layouts:
           - name: "Half Split"
             quickKey: "1"
-            screenSets:
-              - layouts:
-                  $PRIMARY:
-                    type: columns
-                    columns:
-                      - type: empty
-                        percentage: 50
-                      - type: empty
-                        percentage: 50
+            screens:
+              layouts:
+                $PRIMARY:
+                  type: columns
+                  columns:
+                    - type: empty
+                      percentage: 50
+                    - type: empty
+                      percentage: 50
 
           - name: "Thirds"
             quickKey: "2"
-            screenSets:
-              - layouts:
-                  $PRIMARY:
-                    type: columns
-                    columns:
-                      - type: empty
-                        percentage: 33.33
-                      - type: empty
-                        percentage: 33.33
-                      - type: empty
-                        percentage: 33.34
+            screens:
+              layouts:
+                $PRIMARY:
+                  type: columns
+                  columns:
+                    - type: empty
+                      percentage: 33.33
+                    - type: empty
+                      percentage: 33.33
+                    - type: empty
+                      percentage: 33.34
 
           - name: "Main + Side"
             quickKey: "3"
-            screenSets:
-              - layouts:
-                  $PRIMARY:
-                    type: columns
-                    columns:
-                      - type: empty
-                        percentage: 70
-                      - type: rows
-                        rows:
-                          - type: empty
-                            percentage: 50
-                          - type: empty
-                            percentage: 50
+            screens:
+              layouts:
+                $PRIMARY:
+                  type: columns
+                  columns:
+                    - type: empty
+                      percentage: 70
+                    - type: rows
+                      rows:
+                        - type: empty
+                          percentage: 50
+                        - type: empty
+                          percentage: 50
 
           - name: "Coding Layout"
             quickKey: "c"
-            screenSets:
-              - layouts:
-                  $PRIMARY:
-                    type: columns
-                    columns:
-                      - type: pinned
-                        percentage: 60
-                        pinned:
-                          application: "Code"
-                          bundleId: "com.microsoft.VSCode"
-                      - type: rows
-                        percentage: 40
-                        rows:
-                          - type: pinned
-                            percentage: 60
-                            pinned:
-                              application: "Terminal"
-                          - type: pinned
-                            percentage: 40
-                            pinned:
-                              application: "Safari"
+            screens:
+              layouts:
+                $PRIMARY:
+                  type: columns
+                  columns:
+                    - type: pinned
+                      percentage: 60
+                      pinned:
+                        application: "Code"
+                        bundleId: "com.microsoft.VSCode"
+                    - type: rows
+                      percentage: 40
+                      rows:
+                        - type: pinned
+                          percentage: 60
+                          pinned:
+                            application: "Terminal"
+                        - type: pinned
+                          percentage: 40
+                          pinned:
+                            application: "Safari"
 
           - name: "Focus + Stack"
             quickKey: "s"
-            screenSets:
-              - layouts:
-                  $PRIMARY:
-                    type: columns
-                    columns:
-                      - type: empty
-                        percentage: 70
-                      - type: stack
-                        percentage: 30
-                        stackRemaining: true  # All other windows stacked here
+            screens:
+              layouts:
+                $PRIMARY:
+                  type: columns
+                  columns:
+                    - type: empty
+                      percentage: 70
+                    - type: stack
+                      percentage: 30
+                      stackRemaining: true  # All other windows stacked here
         """
     }
 }

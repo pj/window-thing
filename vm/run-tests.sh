@@ -354,13 +354,29 @@ run_tests() {
     # ------------------------------------------------------------------ #
     # Build                                                                 #
     # ------------------------------------------------------------------ #
-    # Clean any stale build artefacts (e.g. corrupted DB from a prior failed run)
-    ssh_run "$ip" "cd $REMOTE_DIR && swift package clean 2>/dev/null || rm -rf .build/build.db" || true
-
-    log_info "Building project in VM..."
-    if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
-        log_error "Build failed"
-        exit 1
+    # The interface tests do not touch the xctest bundle at all: they drive the
+    # packaged app through Accessibility, and `ui-test.sh` builds that itself.
+    # Building the test bundle for them — ViewInspector, all three test targets
+    # — was most of the wall time of a --ui-only run, for nothing.
+    if [ "$ui_only" = true ]; then
+        log_info "Skipping the test-bundle build (--ui-only doesn't use it)"
+    else
+        # Cleaning first is a last resort, not a routine.
+        #
+        # This used to `swift package clean` on every run, which meant every run
+        # was a cold build — the guard against a corrupted build.db from an
+        # interrupted run was being paid in full every time, whether or not
+        # anything was wrong. Build first; only if that fails is it worth
+        # suspecting the build directory, and then we clean and try once more.
+        log_info "Building project in VM..."
+        if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
+            log_warn "Build failed — clearing the build directory and retrying once"
+            ssh_run "$ip" "cd $REMOTE_DIR && swift package clean 2>/dev/null || rm -rf .build/build.db" || true
+            if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
+                log_error "Build failed"
+                exit 1
+            fi
+        fi
     fi
 
     # ------------------------------------------------------------------ #

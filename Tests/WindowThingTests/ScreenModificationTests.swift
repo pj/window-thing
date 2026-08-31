@@ -1,7 +1,7 @@
 import Testing
 @testable import WindowThingCore
 
-@Suite("Screen Set Modification")
+@Suite("Screen modification")
 struct ScreenSetModificationTests {
 
     // MARK: - Add Display
@@ -9,7 +9,7 @@ struct ScreenSetModificationTests {
     @Test("Add display key to empty screen config")
     func addDisplayToEmpty() {
         let config = ScreenConfig(layouts: [:])
-        let result = ScreenSetModification.addDisplay(key: "External Display", to: config)
+        let result = ScreenModification.addDisplay(key: "External Display", to: config)
         #expect(result.layouts.count == 1)
         #expect(result.layouts["External Display"] == .stackAll())
     }
@@ -19,7 +19,7 @@ struct ScreenSetModificationTests {
         let config = ScreenConfig(layouts: [
             ScreenConfig.primaryKey: .pinned(app: "Xcode")
         ])
-        let result = ScreenSetModification.addDisplay(key: "External Display", to: config)
+        let result = ScreenModification.addDisplay(key: "External Display", to: config)
         #expect(result.layouts.count == 2)
         #expect(result.layouts[ScreenConfig.primaryKey] == .pinned(app: "Xcode"))
         #expect(result.layouts["External Display"] == .stackAll())
@@ -31,7 +31,7 @@ struct ScreenSetModificationTests {
             "External Display": .pinned(app: "Safari")
         ])
         let newNode = LayoutNode.columns([.empty(percentage: 50), .empty(percentage: 50)])
-        let result = ScreenSetModification.addDisplay(key: "External Display", defaultNode: newNode, to: config)
+        let result = ScreenModification.addDisplay(key: "External Display", defaultNode: newNode, to: config)
         #expect(result.layouts.count == 1)
         #expect(result.layouts["External Display"] == newNode)
     }
@@ -43,7 +43,7 @@ struct ScreenSetModificationTests {
             .pinned(app: "Terminal", percentage: 50),
             .pinned(app: "Safari", percentage: 50)
         ])
-        let result = ScreenSetModification.addDisplay(key: "Left Monitor", defaultNode: customNode, to: config)
+        let result = ScreenModification.addDisplay(key: "Left Monitor", defaultNode: customNode, to: config)
         #expect(result.layouts["Left Monitor"] == customNode)
     }
 
@@ -55,7 +55,7 @@ struct ScreenSetModificationTests {
             ScreenConfig.primaryKey: .stackAll(),
             "External Display": .pinned(app: "Safari")
         ])
-        let result = ScreenSetModification.removeDisplay(key: "External Display", from: config)
+        let result = ScreenModification.removeDisplay(key: "External Display", from: config)
         #expect(result != nil)
         #expect(result!.layouts.count == 1)
         #expect(result!.layouts[ScreenConfig.primaryKey] == .stackAll())
@@ -64,7 +64,7 @@ struct ScreenSetModificationTests {
     @Test("Remove non-existent key returns nil")
     func removeNonExistentKey() {
         let config = ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        let result = ScreenSetModification.removeDisplay(key: "Unknown", from: config)
+        let result = ScreenModification.removeDisplay(key: "Unknown", from: config)
         #expect(result == nil)
     }
 
@@ -74,7 +74,7 @@ struct ScreenSetModificationTests {
             ScreenConfig.primaryKey: .stackAll(),
             "External Display": .pinned(app: "Safari")
         ])
-        let result = ScreenSetModification.removeDisplay(key: ScreenConfig.primaryKey, from: config)
+        let result = ScreenModification.removeDisplay(key: ScreenConfig.primaryKey, from: config)
         #expect(result != nil)
         #expect(result!.layouts.count == 1)
         #expect(result!.layouts["External Display"] != nil)
@@ -89,7 +89,7 @@ struct ScreenSetModificationTests {
             ScreenConfig.primaryKey: .stackAll(),
             "Old Name": node
         ])
-        let result = ScreenSetModification.renameDisplay(from: "Old Name", to: "New Name", in: config)
+        let result = ScreenModification.renameDisplay(from: "Old Name", to: "New Name", in: config)
         #expect(result != nil)
         #expect(result!.layouts["Old Name"] == nil)
         #expect(result!.layouts["New Name"] == node)
@@ -99,7 +99,7 @@ struct ScreenSetModificationTests {
     @Test("Rename non-existent key returns nil")
     func renameNonExistent() {
         let config = ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        let result = ScreenSetModification.renameDisplay(from: "Unknown", to: "New", in: config)
+        let result = ScreenModification.renameDisplay(from: "Unknown", to: "New", in: config)
         #expect(result == nil)
     }
 
@@ -109,7 +109,7 @@ struct ScreenSetModificationTests {
             "Display A": .stackAll(),
             "Display B": .pinned(app: "Safari")
         ])
-        let result = ScreenSetModification.renameDisplay(from: "Display A", to: "Display B", in: config)
+        let result = ScreenModification.renameDisplay(from: "Display A", to: "Display B", in: config)
         #expect(result == nil)
     }
 
@@ -119,7 +119,7 @@ struct ScreenSetModificationTests {
             ScreenConfig.primaryKey: .stackAll(),
             "External Display": .pinned(app: "Safari")
         ])
-        let result = ScreenSetModification.renameDisplay(from: ScreenConfig.primaryKey, to: "Main Monitor", in: config)
+        let result = ScreenModification.renameDisplay(from: ScreenConfig.primaryKey, to: "Main Monitor", in: config)
         #expect(result != nil)
         #expect(result!.layouts[ScreenConfig.primaryKey] == nil)
         #expect(result!.layouts["Main Monitor"] == .stackAll())
@@ -129,56 +129,58 @@ struct ScreenSetModificationTests {
 
     @Test("Default node is stackAll")
     func defaultNode() {
-        #expect(ScreenSetModification.defaultDisplayNode == .stackAll())
+        #expect(ScreenModification.defaultDisplayNode == .stackAll())
     }
 
     // MARK: - Layout Convenience Extensions
+    //
+    // No index any more: a layout has one display map, so there is nothing to
+    // pick between when adding, removing or renaming a display.
 
-    @Test("Layout addingDisplay to specific screen set")
+    @Test("Layout addingDisplay adds a key to the layout's one map")
     func layoutAddDisplay() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
         )
-        let result = layout.addingDisplay(key: "External Display", toScreenSetAt: 0)
-        #expect(result != nil)
-        #expect(result!.screenSets[0].layouts.count == 2)
-        #expect(result!.screenSets[0].layouts["External Display"] == .stackAll())
+        let result = layout.addingDisplay(key: "External Display")
+        #expect(result.screens.layouts.count == 2)
+        #expect(result.screens.layouts["External Display"] == .stackAll())
     }
 
-    @Test("Layout addingDisplay with invalid index returns nil")
-    func layoutAddDisplayInvalidIndex() {
-        let layout = Layout(name: "Test", screenSets: [])
-        let result = layout.addingDisplay(key: "External", toScreenSetAt: 0)
-        #expect(result == nil)
+    @Test("Adding a display to a layout with no map starts one")
+    func layoutAddDisplayToEmpty() {
+        // There is no longer an index to get wrong, so this cannot fail.
+        let result = Layout(name: "Test").addingDisplay(key: "External")
+        #expect(result.screens.layouts["External"] == .stackAll())
     }
 
-    @Test("Layout removingDisplay from specific screen set")
+    @Test("Layout removingDisplay takes a key out")
     func layoutRemoveDisplay() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stackAll(),
                 "External Display": .pinned(app: "Safari")
-            ])]
+            ])
         )
-        let result = layout.removingDisplay(key: "External Display", fromScreenSetAt: 0)
+        let result = layout.removingDisplay(key: "External Display")
         #expect(result != nil)
-        #expect(result!.screenSets[0].layouts.count == 1)
+        #expect(result!.screens.layouts.count == 1)
     }
 
-    @Test("Layout renamingDisplay in specific screen set")
+    @Test("Layout renamingDisplay moves a key, keeping its tree")
     func layoutRenameDisplay() {
         let layout = Layout(
             name: "Test",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stackAll(),
                 "Old Monitor": .pinned(app: "Safari")
-            ])]
+            ])
         )
-        let result = layout.renamingDisplay(from: "Old Monitor", to: "New Monitor", inScreenSetAt: 0)
+        let result = layout.renamingDisplay(from: "Old Monitor", to: "New Monitor")
         #expect(result != nil)
-        #expect(result!.screenSets[0].layouts["Old Monitor"] == nil)
-        #expect(result!.screenSets[0].layouts["New Monitor"] == .pinned(app: "Safari"))
+        #expect(result!.screens.layouts["Old Monitor"] == nil)
+        #expect(result!.screens.layouts["New Monitor"] == .pinned(app: "Safari"))
     }
 }

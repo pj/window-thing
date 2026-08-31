@@ -11,8 +11,7 @@ struct CellMovementTests {
     func cellsAcrossTwoDisplays() {
         let layout = Layout(
             name: "Dual Columns",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
@@ -22,7 +21,6 @@ struct CellMovementTests {
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
         let cells = CellIndexer.indexCells(layout: layout, displays: TestFixtures.dualDisplays)
 
@@ -51,13 +49,11 @@ struct CellMovementTests {
     func tripleDisplaysOrderedByX() {
         let layout = Layout(
             name: "Triple",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .empty(),
                     "External Display": .empty(),
                     "Left Display": .empty()
                 ])
-            ]
         )
         let cells = CellIndexer.indexCells(layout: layout, displays: TestFixtures.tripleDisplays)
 
@@ -72,12 +68,10 @@ struct CellMovementTests {
     func cellDisplayNames() {
         let layout = Layout(
             name: "Dual",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .empty(),
                     "External Display": .empty()
                 ])
-            ]
         )
         let cells = CellIndexer.indexCells(layout: layout, displays: TestFixtures.dualDisplays)
         #expect(cells.count == 2)
@@ -96,8 +90,7 @@ struct CellMovementTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
         let layout = Layout(
             name: "Dual Columns",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
@@ -107,7 +100,6 @@ struct CellMovementTests {
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
         layoutManager.applyLayout(layout)
         layoutManager.waitForPendingApply()
@@ -135,8 +127,7 @@ struct CellMovementTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
         let layout = Layout(
             name: "Dual Columns",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
@@ -146,7 +137,6 @@ struct CellMovementTests {
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
         layoutManager.applyLayout(layout)
         layoutManager.waitForPendingApply()
@@ -174,9 +164,9 @@ struct CellMovementTests {
         let layoutManager = LayoutManager(windowManager: mockWindowManager)
         let layout = Layout(
             name: "Simple",
-            screenSets: [ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([.empty(percentage: 50), .empty(percentage: 50)])
-            ])]
+            ])
         )
         layoutManager.applyLayout(layout)
         layoutManager.waitForPendingApply()

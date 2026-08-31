@@ -557,11 +557,9 @@ struct MonitorHandlingTests {
     func primaryKeyMatchesMainDisplay() {
         let layout = Layout(
             name: "Primary Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode(type: .stack, percentage: 100)
                 ])
-            ]
         )
         let displays = TestFixtures.singleDisplay
         let windows = TestFixtures.typicalWindows
@@ -585,12 +583,10 @@ struct MonitorHandlingTests {
         // Layout: VSCode pinned on secondary, stack on main
         let layout = Layout(
             name: "Dual Display",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode(type: .stack, percentage: 100),
                     "External Display": .pinned(app: nil, bundleId: "com.microsoft.VSCode", percentage: 100)
                 ])
-            ]
         )
         let displays = TestFixtures.dualDisplays
         let windows = TestFixtures.typicalWindows
@@ -618,12 +614,10 @@ struct MonitorHandlingTests {
         // Pinned on secondary, stack on main should NOT include secondary's window
         let layout = Layout(
             name: "Dual Display",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: LayoutNode(type: .stack, percentage: 100),
                     "External Display": .pinned(app: nil, bundleId: "com.microsoft.VSCode", percentage: 100)
                 ])
-            ]
         )
         let displays = TestFixtures.dualDisplays
         let windows = TestFixtures.typicalWindows
@@ -643,11 +637,9 @@ struct MonitorHandlingTests {
     func noMatchingScreenSetFallsBackToStackOnPrimary() {
         let layout = Layout(
             name: "Specific Display",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     "NonExistent Display": .empty()
                 ])
-            ]
         )
         let displays = TestFixtures.singleDisplay
         let windows = TestFixtures.typicalWindows
@@ -672,14 +664,12 @@ struct MonitorHandlingTests {
         // Both layouts on secondary display - no main display in layout
         let layout = Layout(
             name: "Secondary Only",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     "External Display": LayoutNode.columns([
                         .pinned(app: nil, bundleId: "com.microsoft.VSCode", percentage: 50),
                         LayoutNode(type: .stack, percentage: 50)
                     ])
                 ])
-            ]
         )
         let displays = TestFixtures.dualDisplays
         let windows = TestFixtures.typicalWindows
@@ -703,12 +693,10 @@ struct MonitorHandlingTests {
     func multipleDisplaysWithExplicitNames() {
         let layout = Layout(
             name: "Named Displays",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     "Main Display": .pinned(app: nil, bundleId: "com.microsoft.VSCode", percentage: 100),
                     "External Display": .pinned(app: "Terminal", percentage: 100)
                 ])
-            ]
         )
         let displays = TestFixtures.dualDisplays
         let windows = TestFixtures.typicalWindows
@@ -836,7 +824,7 @@ struct EdgeCaseTests {
 
     @Test("Layout with no screen sets falls back to stack")
     func layoutWithNoScreenSetsFallsBackToStack() {
-        let layout = Layout(name: "Empty", screenSets: [])
+        let layout = Layout(name: "Empty")
         let displays = TestFixtures.singleDisplay
         let windows = TestFixtures.typicalWindows
 

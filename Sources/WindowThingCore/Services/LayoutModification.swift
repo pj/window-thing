@@ -606,9 +606,7 @@ extension Layout {
         windowTitle: String?,
         to toPath: [Int]
     ) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard var monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -643,7 +641,7 @@ extension Layout {
         let newLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: newLayout, changed: true)
@@ -671,9 +669,7 @@ extension Layout {
 
     /// Remove a pinned window from a location
     func removingPinnedAt(monitor: String, location: [Int]) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard let monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -691,7 +687,7 @@ extension Layout {
         let updatedLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: updatedLayout, changed: true)
@@ -704,9 +700,7 @@ extension Layout {
         index: Int,
         node: LayoutNode
     ) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard let monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -725,7 +719,7 @@ extension Layout {
         let updatedLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: updatedLayout, changed: true)
@@ -738,9 +732,7 @@ extension Layout {
         index: Int,
         node: LayoutNode
     ) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard let monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -759,7 +751,7 @@ extension Layout {
         let updatedLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: updatedLayout, changed: true)
@@ -771,9 +763,7 @@ extension Layout {
         at location: [Int],
         index: Int
     ) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard let monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -792,7 +782,7 @@ extension Layout {
         let updatedLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: updatedLayout, changed: true)
@@ -804,9 +794,7 @@ extension Layout {
         at location: [Int],
         index: Int
     ) -> LayoutModificationResult {
-        guard let screenSet = screenSets.first else {
-            return LayoutModificationResult(layout: self, changed: false)
-        }
+        let screenSet = screens
 
         guard let monitorLayout = screenSet.layouts[monitor] else {
             return LayoutModificationResult(layout: self, changed: false)
@@ -825,7 +813,7 @@ extension Layout {
         let updatedLayout = Layout(
             name: name,
             quickKey: quickKey,
-            screenSets: [newScreenSet]
+            screens: newScreenSet
         )
 
         return LayoutModificationResult(layout: updatedLayout, changed: true)
@@ -1230,7 +1218,7 @@ public extension ScreenConfig {
 public extension Layout {
     func normalized() -> Layout {
         var copy = self
-        copy.screenSets = screenSets.map { $0.normalized() }
+        copy.screens = screens.normalized()
         return copy
     }
 }

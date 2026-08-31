@@ -221,25 +221,24 @@ extension OverlayViewModel {
         let layout = WTLayout(
             name: "Coding",
             quickKey: "c",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: previewRoot])]
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: previewRoot])
         )
         let secondary = WTLayout(
             name: "Focus",
             quickKey: "f",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
         )
         let thirds = WTLayout(
             name: "Thirds",
             quickKey: "3",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .columns([
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .columns([
                 .empty(percentage: 33),
                 .empty(percentage: 34),
                 .empty(percentage: 33)
-            ])])]
+            ])])
         )
         vm.layouts = [layout, secondary, thirds]
         vm.editingLayout = layout
-        vm.selectedScreenSetIndex = 0
         vm.refreshEditingRootNode()
         vm.runningApps = [
             RunningAppInfo(name: "Safari", bundleId: "com.apple.Safari"),

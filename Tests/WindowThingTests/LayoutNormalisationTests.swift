@@ -94,12 +94,10 @@ struct LayoutNormalisationTests {
         let debris = cols([rows([stack(100)])])
         let layout = Layout(
             name: "L",
-            screenSets: [
-                ScreenConfig(layouts: [ScreenConfig.primaryKey: debris, "Studio": debris])
-            ]
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: debris, "Studio": debris])
         )
         let out = layout.normalized()
-        #expect(out.screenSets[0].layouts[ScreenConfig.primaryKey]?.type == .stack)
-        #expect(out.screenSets[0].layouts["Studio"]?.type == .stack)
+        #expect(out.screens.layouts[ScreenConfig.primaryKey]?.type == .stack)
+        #expect(out.screens.layouts["Studio"]?.type == .stack)
     }
 }

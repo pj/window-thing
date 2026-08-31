@@ -216,7 +216,70 @@ struct ConfigParsingTests {
 
         #expect(layout.name == "My Layout")
         #expect(layout.quickKey == "1")
-        #expect(layout.screenSets.count == 1)
+        // Old configs still decode: a screenSets list collapses to one map.
+        #expect(layout.screens.layouts.count == 1)
+    }
+
+    // MARK: - Migration from screen sets
+
+    @Test("An old config's screen sets collapse to the most specific one")
+    func oldScreenSetsCollapse() throws {
+        // The list existed to be chosen between, and there is nothing to choose
+        // any more. The set naming the most displays is kept — that is what the
+        // old matcher preferred with everything plugged in, so a full setup
+        // keeps the arrangement it had.
+        let yaml = """
+        name: Legacy
+        quickKey: "9"
+        screenSets:
+          - layouts:
+              $PRIMARY:
+                type: stack
+          - layouts:
+              $PRIMARY:
+                type: columns
+                columns:
+                  - type: stack
+                    percentage: 50
+                  - type: empty
+                    percentage: 50
+              External Display:
+                type: empty
+        """
+        let layout = try YAMLDecoder().decode(Layout.self, from: yaml)
+
+        #expect(layout.name == "Legacy")
+        #expect(layout.screens.layouts.count == 2)
+        #expect(layout.screens.layouts[ScreenConfig.primaryKey]?.type == .columns)
+        #expect(layout.screens.layouts["External Display"]?.type == .empty)
+    }
+
+    @Test("A config written in the new shape decodes as itself")
+    func newShapeDecodes() throws {
+        let yaml = """
+        name: Modern
+        screens:
+          layouts:
+            $PRIMARY:
+              type: stack
+        """
+        let layout = try YAMLDecoder().decode(Layout.self, from: yaml)
+        #expect(layout.screens.layouts[ScreenConfig.primaryKey]?.type == .stack)
+    }
+
+    @Test("Encoding writes the new shape and never the old list")
+    func encodingDropsTheOldShape() throws {
+        let layout = Layout(
+            name: "Round Trip",
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
+        )
+        let yaml = try YAMLEncoder().encode(layout)
+        #expect(yaml.contains("screens:"))
+        #expect(!yaml.contains("screenSets:"))
+
+        let back = try YAMLDecoder().decode(Layout.self, from: yaml)
+        #expect(back.screens == layout.screens)
+        #expect(back.id == layout.id)
     }
 
     // MARK: - Full Config Decoding

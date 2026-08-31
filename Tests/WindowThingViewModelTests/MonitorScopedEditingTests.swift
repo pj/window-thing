@@ -56,12 +56,10 @@ private class MockConfigManager: ConfigProviding {
 /// A layout spanning two monitors: the stack on the primary, a pinned pane and
 /// an empty pane on the external.
 private func twoMonitorLayout() -> Layout {
-    Layout(name: "Spanning", screenSets: [
-        ScreenConfig(layouts: [
+    Layout(name: "Spanning", screens: ScreenConfig(layouts: [
             ScreenConfig.primaryKey: .columns([.stackAll(percentage: 50), .empty(percentage: 50)]),
             "External": .pinned(app: "Mail")
-        ])
-    ])
+        ]))
 }
 
 private func makeVM(
@@ -91,11 +89,13 @@ struct MonitorScopedReadTests {
         #expect(vm.rootNode(forMonitor: "External")?.type == .pinned)
     }
 
-    @Test("A monitor the layout doesn't describe has no tree")
-    func unknownMonitorHasNoTree() {
+    @Test("A monitor the layout doesn't describe is shown as empty, not as nothing")
+    func unknownMonitorShowsEmpty() {
         let (vm, _, _) = makeVM(layouts: [twoMonitorLayout()])
 
-        #expect(vm.rootNode(forMonitor: "Unplugged") == nil)
+        // Something to edit, but not yet part of the layout — `hasLayout` is
+        // what distinguishes the two.
+        #expect(vm.rootNode(forMonitor: "Unplugged")?.type == .empty)
         #expect(!vm.hasLayout(forMonitor: "Unplugged"))
         #expect(vm.hasLayout(forMonitor: "External"))
     }
@@ -135,7 +135,7 @@ struct MonitorScopedEditTests {
         vm.commitEdit(.pinned(app: "Safari"), forMonitor: "External")
 
         #expect(lm.updatedLayouts.count == 1)
-        #expect(cm.savedLayouts.first?.screenSets[0].layouts["External"]?.pinned?.application == "Safari")
+        #expect(cm.savedLayouts.first?.screens.layouts["External"]?.pinned?.application == "Safari")
     }
 
     @Test("Undo restores the monitor that was edited")
@@ -184,7 +184,7 @@ struct MultiMonitorCommitTests {
             actionName: "Move Stack"
         )
 
-        let screenSet = vm.editingLayout?.screenSets[0]
+        let screenSet = vm.editingLayout?.screens
         #expect(screenSet?.stackKeys == ["External"])
     }
 
@@ -215,50 +215,56 @@ struct MultiMonitorCommitTests {
     }
 }
 
-// MARK: - Adding a display
+// MARK: - A display the layout has never seen
 
-@Suite("OverlayViewModel.addMonitor")
-struct AddMonitorTests {
+@Suite("OverlayViewModel.uncoveredDisplays")
+struct UncoveredDisplayTests {
 
-    @Test("A new monitor starts empty when the layout already has a stack")
-    func doesNotAddASecondStack() {
-        // Regression: `addingDisplay` defaults to a full stack, so adding a
-        // display used to leave the layout with two.
-        let layout = Layout(name: "Solo", screenSets: [
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        ])
+    @Test("An uncovered display shows a full-screen empty pane")
+    func uncoveredShowsEmptyPane() {
+        // No notice, no button, nothing to agree to before you can arrange it.
+        let layout = Layout(name: "Solo", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
         let (vm, _, _) = makeVM(layouts: [layout])
 
-        vm.addMonitorToScreenSet("External")
-
-        let screenSet = vm.editingLayout?.screenSets[0]
-        #expect(screenSet?.stackKeys == [ScreenConfig.primaryKey])
-        #expect(screenSet?.layouts["External"]?.type == .empty)
+        #expect(vm.rootNode(forMonitor: "External")?.type == .empty)
     }
 
-    @Test("A new monitor takes the stack when nothing else holds it")
-    func takesStackWhenLayoutHasNone() {
-        let layout = Layout(name: "Solo", screenSets: [
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .pinned(app: "Mail")])
-        ])
+    @Test("Looking at an uncovered display does not add it to the layout")
+    func lookingDoesNotAddIt() {
+        // The empty pane is what an uncovered display looks like, not something
+        // written down — otherwise a layout would collect a display for every
+        // screen the editor was ever opened on.
+        let layout = Layout(name: "Solo", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
         let (vm, _, _) = makeVM(layouts: [layout])
 
-        vm.addMonitorToScreenSet("External")
+        _ = vm.rootNode(forMonitor: "External")
 
-        #expect(vm.editingLayout?.screenSets[0].stackKeys == ["External"])
+        #expect(vm.editingLayout?.screens.layouts["External"] == nil)
+        #expect(vm.hasLayout(forMonitor: "External") == false)
     }
 
-    @Test("Adding a display is saved, not just held in memory")
-    func addingADisplayPersists() {
-        let layout = Layout(name: "Solo", screenSets: [
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        ])
-        let (vm, lm, cm) = makeVM(layouts: [layout])
+    @Test("Editing an uncovered display writes it into the layout")
+    func editingAddsIt() {
+        let layout = Layout(name: "Solo", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
+        let (vm, _, _) = makeVM(layouts: [layout])
 
-        vm.addMonitorToScreenSet("External")
+        vm.commitEdit(.columns([.empty(percentage: 50), .empty(percentage: 50)]),
+                      forMonitor: "External", actionName: "Split")
 
-        #expect(lm.updatedLayouts.count == 1)
-        #expect(cm.savedLayouts.first?.screenSets[0].layouts["External"] != nil)
+        #expect(vm.hasLayout(forMonitor: "External") == true)
+        #expect(vm.editingLayout?.screens.layouts["External"]?.type == .columns)
+    }
+
+    @Test("Arranging a new display does not give the layout a second stack")
+    func noSecondStack() {
+        // The layout's stack stays where it was: an uncovered display starts
+        // empty, and two stacks would both claim every unpinned window.
+        let layout = Layout(name: "Solo", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
+        let (vm, _, _) = makeVM(layouts: [layout])
+
+        vm.commitEdit(vm.rootNode(forMonitor: "External")!, forMonitor: "External", actionName: "Touch")
+
+        #expect(vm.editingLayout?.screens.stackKeys == [ScreenConfig.primaryKey])
     }
 }
 
@@ -268,14 +274,12 @@ struct AddMonitorTests {
 struct SelectorTargetTests {
 
     private func splitLayout() -> Layout {
-        Layout(name: "Split", screenSets: [
-            ScreenConfig(layouts: [
+        Layout(name: "Split", screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .columns([
                     .stackAll(percentage: 50),
                     .empty(percentage: 50)
                 ])
-            ])
-        ])
+            ]))
     }
 
     @Test("The selector holds the pane it opened on")
@@ -349,9 +353,9 @@ struct LayoutListEditTests {
 
     private func three() -> [Layout] {
         [
-            Layout(name: "One", screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]),
-            Layout(name: "Two", screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]),
-            Layout(name: "Three", screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])])
+            Layout(name: "One", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])),
+            Layout(name: "Two", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])),
+            Layout(name: "Three", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
         ]
     }
 
@@ -379,7 +383,7 @@ struct LayoutListEditTests {
         let (vm, _, cm) = makeVM(layouts: three())
 
         vm.beginRename(vm.layouts[1])
-        vm.renameDraft = "  Renamed  "
+        vm.pendingRenameText = "  Renamed  "
         vm.commitRename()
 
         #expect(vm.layouts[1].name == "Renamed")
@@ -392,7 +396,7 @@ struct LayoutListEditTests {
         let (vm, _, _) = makeVM(layouts: three())
 
         vm.beginRename(vm.layouts[0])
-        vm.renameDraft = "   "
+        vm.pendingRenameText = "   "
         vm.commitRename()
 
         #expect(vm.layouts[0].name == "Untitled")
@@ -403,7 +407,7 @@ struct LayoutListEditTests {
         let (vm, _, _) = makeVM(layouts: three())
 
         vm.beginRename(vm.layouts[0])
-        vm.renameDraft = "Discarded"
+        vm.pendingRenameText = "Discarded"
         vm.cancelRename()
 
         #expect(vm.layouts[0].name == "One")
@@ -418,7 +422,7 @@ struct LayoutListEditTests {
         vm.startEditing(vm.layouts[0])
 
         vm.beginRename(vm.layouts[2])
-        vm.renameDraft = "Renamed"
+        vm.pendingRenameText = "Renamed"
         vm.commitRename()
 
         #expect(vm.editingLayout?.name == "One")
@@ -448,7 +452,7 @@ struct DeleteConfirmationTests {
     @Test("Deleting still refuses to remove the last layout")
     func lastLayoutSurvives() {
         // The confirmation is in front of this, not instead of it.
-        let (vm, _, _) = makeVM(layouts: [Layout(name: "Only", screenSets: [])])
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "Only")])
 
         vm.deleteLayout(vm.layouts[0])
 
@@ -458,9 +462,9 @@ struct DeleteConfirmationTests {
     @Test("Confirming a delete removes exactly that layout")
     func deleteRemovesTheRightOne() {
         let (vm, _, _) = makeVM(layouts: [
-            Layout(name: "First", screenSets: []),
-            Layout(name: "Second", screenSets: []),
-            Layout(name: "Third", screenSets: []),
+            Layout(name: "First"),
+            Layout(name: "Second"),
+            Layout(name: "Third"),
         ])
 
         vm.deleteLayout(vm.layouts[1])
@@ -487,10 +491,10 @@ struct LayoutListSyncTests {
         // gone. updateLayout only replaced layouts it already knew about, so a
         // brand new one was written to the config and then lost on the next
         // reopen, which re-reads from the manager.
-        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Existing", screenSets: [])])
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Existing")])
 
         vm.addLayout()
-        vm.renameDraft = "Fresh"
+        vm.pendingRenameText = "Fresh"
         vm.commitRename()
 
         #expect(manager.layouts.map(\.name).contains("Fresh"),
@@ -503,7 +507,7 @@ struct LayoutListSyncTests {
 
     @Test("A duplicated layout reaches the layout manager")
     func duplicatedLayoutReachesManager() {
-        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Original", screenSets: [])])
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Original")])
 
         vm.duplicateLayout(vm.layouts[0])
 
@@ -517,8 +521,8 @@ struct LayoutListSyncTests {
         // The mirror of the same fault: the editor dropped it, the manager kept
         // it, so it came back on reopen and stayed in the menubar meanwhile.
         let (vm, manager, _) = makeVM(layouts: [
-            Layout(name: "Keep", screenSets: []),
-            Layout(name: "Remove", screenSets: []),
+            Layout(name: "Keep"),
+            Layout(name: "Remove"),
         ])
 
         vm.deleteLayout(vm.layouts[1])
@@ -531,10 +535,10 @@ struct LayoutListSyncTests {
 
     @Test("A rename reaches the layout manager")
     func renameReachesManager() {
-        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Before", screenSets: [])])
+        let (vm, manager, _) = makeVM(layouts: [Layout(name: "Before")])
 
         vm.beginRename(vm.layouts[0])
-        vm.renameDraft = "After"
+        vm.pendingRenameText = "After"
         vm.commitRename()
 
         #expect(manager.layouts.map(\.name) == ["After"])
@@ -557,7 +561,7 @@ struct TextFocusTests {
         // away from it — cleared it while the rename field was still active.
         // The next keystroke was then read as a command, and space closes the
         // surface.
-        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One")])
 
         vm.beginRename(vm.layouts[0])
         #expect(vm.isTextFieldFocused, "a rename should hold the keyboard")
@@ -569,7 +573,7 @@ struct TextFocusTests {
 
     @Test("Search holds the keyboard when nothing is being renamed")
     func searchHoldsKeyboard() {
-        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One")])
 
         #expect(!vm.isTextFieldFocused)
         vm.isSearchFieldFocused = true
@@ -580,10 +584,10 @@ struct TextFocusTests {
 
     @Test("Ending a rename gives the keyboard back")
     func endingRenameReleasesKeyboard() {
-        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One")])
 
         vm.beginRename(vm.layouts[0])
-        vm.renameDraft = "Two"
+        vm.pendingRenameText = "Two"
         vm.commitRename()
         #expect(!vm.isTextFieldFocused, "the surface should take the keyboard back")
 
@@ -597,7 +601,7 @@ struct TextFocusTests {
         // Several panes each draw a chooser, so several of them write this. A
         // pane that never had focus reporting false must not silence a pane
         // that does.
-        let (vm, _, _) = makeVM(layouts: [Layout(name: "One", screenSets: [])])
+        let (vm, _, _) = makeVM(layouts: [Layout(name: "One")])
 
         vm.isSearchFieldFocused = true
         vm.beginRename(vm.layouts[0])

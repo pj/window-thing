@@ -20,7 +20,6 @@ public class OverlayViewModel: ObservableObject {
     @Published public var renamingLayoutId: UUID?
     @Published public var recordingHotkeyLayoutId: UUID?
     @Published public var editingLayout: Layout?
-    @Published public var selectedScreenSetIndex: Int = 0
     @Published public var selectedMonitorKey: String = ScreenConfig.primaryKey
     @Published public var selectedNodePath: NodePath = .root
     @Published public var editingRootNode: LayoutNode?
@@ -143,7 +142,6 @@ public class OverlayViewModel: ObservableObject {
 
     public func startEditing(_ layout: Layout) {
         editingLayout = layout
-        selectedScreenSetIndex = 0
         selectedMonitorKey = ScreenConfig.primaryKey
         selectedNodePath = .root
         refreshEditingRootNode()
@@ -167,13 +165,6 @@ public class OverlayViewModel: ObservableObject {
         layoutManager.applyLayout(layout)
     }
 
-    public func selectScreenSet(_ index: Int) {
-        selectedScreenSetIndex = index
-        selectedMonitorKey = ScreenConfig.primaryKey
-        selectedNodePath = .root
-        refreshEditingRootNode()
-    }
-
     public var carouselCanGoBack: Bool { carouselOffset > 0 }
     public var carouselCanGoForward: Bool { carouselOffset + carouselPageSize < layouts.count }
 
@@ -181,12 +172,12 @@ public class OverlayViewModel: ObservableObject {
     public func carouselPageForward() { if carouselCanGoForward { carouselOffset += 1 } }
 
     public func refreshEditingRootNode() {
-        guard let layout = editingLayout,
-              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else {
+        guard let layout = editingLayout else {
             editingRootNode = nil
             return
         }
-        // Use selectedMonitorKey if it exists in this screen set, otherwise fall back
+        let screenSet = layout.screens
+        // Use selectedMonitorKey if this layout covers it, otherwise fall back
         if screenSet.layouts[selectedMonitorKey] != nil {
             editingRootNode = screenSet.layouts[selectedMonitorKey]
         } else {
@@ -196,20 +187,30 @@ public class OverlayViewModel: ObservableObject {
         }
     }
 
-    /// The tree for one monitor of the current screen set.
+    /// The tree this layout puts on one monitor.
     ///
     /// Per-screen overlays each render their own display, so they read by key
     /// rather than through `selectedMonitorKey`, which is a single cursor and
     /// can only describe one of them.
     public func rootNode(forMonitor key: String) -> LayoutNode? {
-        guard let layout = editingLayout,
-              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return nil }
-        return screenSet.layouts[key]
+        guard let layout = editingLayout else { return nil }
+        // A display the layout has never seen gets a full-screen empty pane
+        // rather than nothing at all. It used to get a notice offering to add
+        // the display, which made covering a new monitor a decision you had to
+        // make before you could do anything with it; an empty pane is the same
+        // answer with nothing to agree to, and it is editable straight away.
+        //
+        // Not written into the layout here: this is what an uncovered display
+        // *looks* like. It becomes real in `applyRootNodeUpdate` the moment
+        // anything is done to it, so a layout only grows a display when the
+        // user actually arranges one.
+        return layout.screens.layouts[key] ?? .empty()
     }
 
-    /// Whether the current screen set describes this monitor at all.
+    /// Whether this layout actually names this monitor, as opposed to falling
+    /// back to the empty pane an uncovered display is shown as.
     public func hasLayout(forMonitor key: String) -> Bool {
-        rootNode(forMonitor: key) != nil
+        editingLayout?.screens.layouts[key] != nil
     }
 
     public func preferredMonitorKey(for screenSet: ScreenConfig) -> String {
@@ -221,9 +222,8 @@ public class OverlayViewModel: ObservableObject {
     // MARK: - Node Updates (internal)
 
     private func applyRootNodeUpdate(_ node: LayoutNode, forMonitor key: String) {
-        guard var layout = editingLayout,
-              selectedScreenSetIndex < layout.screenSets.count else { return }
-        layout.screenSets[selectedScreenSetIndex].layouts[key] = node
+        guard var layout = editingLayout else { return }
+        layout.screens.layouts[key] = node
         editingLayout = layout
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
             layouts[idx] = layout
@@ -319,20 +319,39 @@ public class OverlayViewModel: ObservableObject {
     // anywhere else in the window can commit it — an AppKit-hosted SwiftUI text
     // field doesn't resign focus just because something non-focusable was hit.
 
-    @Published public var renameDraft: String = ""
+    /// The name a rename starts from, read once when the field appears.
+    public private(set) var renameStartingName: String = ""
+
+    /// What the rename field currently holds.
+    ///
+    /// Deliberately not `@Published`. The chip owns the text as `@State` so the
+    /// field stays responsive; this mirror exists only so that committing from
+    /// outside the field — a click elsewhere ends a rename — can see what was
+    /// typed. Publishing it is what made every keystroke re-render every pane.
+    public var pendingRenameText: String = ""
 
     public func beginRename(_ layout: Layout) {
-        renameDraft = layout.name
+        renameStartingName = layout.name
+        pendingRenameText = layout.name
         renamingLayoutId = layout.id
     }
 
-    /// Apply the draft name. No-op unless a rename is in progress.
+    /// Apply a name typed into the rename field. No-op unless a rename is in
+    /// progress.
+    ///
+    /// Reads a mirror rather than an `@Published` draft. It used to be
+    /// published, so every keystroke sent a change to every
+    /// view observing the view model — which is every pane on every display,
+    /// each rendering a full list of apps and window thumbnails. The app could
+    /// not keep up, and the interface tests measured it as typed names arriving
+    /// short: "Renamed By Test" losing its last characters. The text now lives
+    /// in the field until it is committed.
     public func commitRename() {
         guard let id = renamingLayoutId else { return }
         renamingLayoutId = nil
         guard let index = layouts.firstIndex(where: { $0.id == id }) else { return }
 
-        let trimmed = renameDraft.trimmingCharacters(in: .whitespaces)
+        let trimmed = pendingRenameText.trimmingCharacters(in: .whitespaces)
         layouts[index].name = trimmed.isEmpty ? "Untitled" : trimmed
 
         // Renaming a layout must not make it the one being edited.
@@ -421,7 +440,7 @@ public class OverlayViewModel: ObservableObject {
     public func addLayout() {
         let newLayout = Layout(
             name: "",
-            screenSets: [ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])]
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
         )
         layouts.append(newLayout)
         persistLayouts()
@@ -435,7 +454,7 @@ public class OverlayViewModel: ObservableObject {
             id: UUID(),
             name: layout.name + " Copy",
             quickKey: nil,
-            screenSets: layout.screenSets
+            screens: layout.screens
         )
         if let idx = layouts.firstIndex(where: { $0.id == layout.id }) {
             layouts.insert(copy, at: idx + 1)
@@ -696,10 +715,9 @@ public class OverlayViewModel: ObservableObject {
     // MARK: - Monitor Selection
 
     /// Keys in the current screen set, sorted with $PRIMARY first.
-    public var monitorKeysForCurrentScreenSet: [String] {
-        guard let layout = editingLayout,
-              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return [] }
-        let keys = Array(screenSet.layouts.keys)
+    public var monitorKeys: [String] {
+        guard let layout = editingLayout else { return [] }
+        let keys = Array(layout.screens.layouts.keys)
         return keys.sorted { a, b in
             if a == ScreenConfig.primaryKey { return true }
             if b == ScreenConfig.primaryKey { return false }
@@ -722,7 +740,7 @@ public class OverlayViewModel: ObservableObject {
 
     /// Connected displays not yet in the current screen set.
     public var availableDisplaysToAdd: [String] {
-        let currentKeys = Set(monitorKeysForCurrentScreenSet)
+        let currentKeys = Set(monitorKeys)
         return displays
             .filter { !$0.isMain && !currentKeys.contains($0.name) }
             .map { $0.name }
@@ -735,55 +753,26 @@ public class OverlayViewModel: ObservableObject {
         refreshEditingRootNode()
     }
 
-    public func addMonitorToScreenSet(_ displayName: String) {
-        guard let layout = editingLayout,
-              let screenSet = layout.screenSets[safe: selectedScreenSetIndex] else { return }
-
-        // The layout has one stack across all its displays, so a new monitor
-        // starts empty — unless nothing holds the stack yet.
-        let defaultNode: LayoutNode = screenSet.containsStack ? .empty() : .stackAll()
-
-        guard let updated = layout.addingDisplay(
-            key: displayName,
-            defaultNode: defaultNode,
-            toScreenSetAt: selectedScreenSetIndex
-        ) else { return }
-
-        syncEditingLayout(updated)
-        selectedMonitorKey = displayName
-        refreshEditingRootNode()
-        // Adding a display is a real change; it was previously left unsaved.
-        layoutManager.updateLayout(updated)
-        persistLayouts()
-    }
-
-    public func removeMonitorFromScreenSet(_ key: String) {
+    /// Take a display's tree out of this layout.
+    ///
+    /// The primary cannot go: every layout keeps a tree for the main display so
+    /// that it always applies to something.
+    ///
+    /// Nothing calls this yet. A layout gains a display by being edited on one
+    /// and has no way to shed it again, which is harmless — an empty tree
+    /// places no windows — but is the obvious gap if layouts start collecting
+    /// screens you no longer own.
+    public func removeMonitor(_ key: String) {
         guard key != ScreenConfig.primaryKey,
-              var layout = editingLayout,
-              let updated = layout.removingDisplay(key: key, fromScreenSetAt: selectedScreenSetIndex) else { return }
+              let layout = editingLayout,
+              let updated = layout.removingDisplay(key: key) else { return }
         syncEditingLayout(updated)
         if selectedMonitorKey == key {
             selectedMonitorKey = ScreenConfig.primaryKey
         }
         refreshEditingRootNode()
-    }
-
-    // MARK: - Screen Sets
-
-    public func addScreenSet() {
-        guard var layout = editingLayout else { return }
-        layout.screenSets.append(ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
-        syncEditingLayout(layout)
-        selectedScreenSetIndex = layout.screenSets.count - 1
-        refreshEditingRootNode()
-    }
-
-    public func removeScreenSet(at index: Int) {
-        guard var layout = editingLayout, layout.screenSets.count > 1 else { return }
-        layout.screenSets.remove(at: index)
-        syncEditingLayout(layout)
-        selectedScreenSetIndex = min(selectedScreenSetIndex, layout.screenSets.count - 1)
-        refreshEditingRootNode()
+        layoutManager.updateLayout(updated)
+        persistLayouts()
     }
 
     private func syncEditingLayout(_ layout: Layout) {

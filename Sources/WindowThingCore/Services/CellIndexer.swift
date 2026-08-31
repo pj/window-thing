@@ -53,9 +53,7 @@ public enum CellIndexer {
     /// Enumerate all leaf cells in the layout for the current display configuration.
     /// Returns one `IndexedCell` per leaf node, in global index order.
     public static func indexCells(layout: Layout, displays: [Display]) -> [IndexedCell] {
-        guard let screenSet = layout.matchingScreenSet(for: displays) else {
-            return []
-        }
+        let screenSet = layout.screens.resolved(for: displays)
         let orderedDisplays = displays.sorted { $0.frame.x < $1.frame.x }
         var cells: [IndexedCell] = []
         for display in orderedDisplays {
@@ -78,7 +76,7 @@ public enum CellIndexer {
 
     /// Return ghost cell positions available for layout extension.
     public static func ghostPositions(layout: Layout, displays: [Display]) -> [GhostCellPosition] {
-        guard let screenSet = layout.matchingScreenSet(for: displays) else { return [] }
+        let screenSet = layout.screens.resolved(for: displays)
         let orderedDisplays = displays.sorted { $0.frame.x < $1.frame.x }
         var ghosts: [GhostCellPosition] = []
         let minPct = 15.0
@@ -178,9 +176,7 @@ public enum CellIndexer {
         let cells = indexCells(layout: layout, displays: displays)
         var subCells: [SubIndexedCell] = []
 
-        guard let screenSet = layout.matchingScreenSet(for: displays) else {
-            return CellMap(cells: cells, subCells: [])
-        }
+        let screenSet = layout.screens.resolved(for: displays)
 
         // For each cell, check if its corresponding node has a sublayout
         let orderedDisplays = displays.sorted { $0.frame.x < $1.frame.x }

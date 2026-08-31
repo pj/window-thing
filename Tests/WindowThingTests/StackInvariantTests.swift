@@ -81,32 +81,27 @@ struct StackInvariantTests {
         #expect(set.deduplicatingStacks() == set)
     }
 
-    @Test("Repair covers every screen set of a layout")
+    @Test("Repair covers every display of a layout")
     func repairsWholeLayout() {
-        let layout = Layout(name: "Test", screenSets: [
-            ScreenConfig(layouts: [
-                ScreenConfig.primaryKey: .stackAll(),
-                "External": .stackAll()
-            ]),
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        ])
+        let layout = Layout(name: "Test", screens: ScreenConfig(layouts: [
+            ScreenConfig.primaryKey: .stackAll(),
+            "External": .stackAll(),
+            "Third": .stackAll()
+        ]))
 
         let fixed = layout.deduplicatingStacks()
 
-        #expect(fixed.screenSets[0].stackKeys.count == 1)
-        #expect(fixed.screenSets[1].stackKeys.count == 1)
+        #expect(fixed.screens.stackKeys.count == 1)
     }
 
     @Test("Loading a config repairs a layout that already has two stacks")
     func loadRepairsExistingConfigs() {
         // A config written by an older build — or edited by hand — can hold two
         // stacks. Loading has to fix it, since nothing else will.
-        let broken = Layout(name: "Broken", screenSets: [
-            ScreenConfig(layouts: [
+        let broken = Layout(name: "Broken", screens: ScreenConfig(layouts: [
                 ScreenConfig.primaryKey: .stackAll(),
                 "External": .stackAll()
-            ])
-        ])
+            ]))
         let manager = LayoutManager(windowManager: MockWindowManager())
 
         manager.loadLayouts(from: AppConfig(
@@ -120,22 +115,19 @@ struct StackInvariantTests {
             minimumWindowHeight: 200
         ))
 
-        #expect(manager.layouts[0].screenSets[0].stackKeys == [ScreenConfig.primaryKey])
+        #expect(manager.layouts[0].screens.stackKeys == [ScreenConfig.primaryKey])
     }
 
     @Test("Adding a display to a set that has a stack adds an empty pane")
     func addingDisplayDoesNotAddASecondStack() {
         // The bug: `addingDisplay` defaults to a full stack, so adding a second
         // monitor silently gave the layout two.
-        let layout = Layout(name: "Test", screenSets: [
-            ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
-        ])
+        let layout = Layout(name: "Test", screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
 
         let updated = layout.addingDisplay(
-            key: "External", defaultNode: .empty(), toScreenSetAt: 0
-        )
+            key: "External", defaultNode: .empty())
 
-        #expect(updated?.screenSets[0].stackKeys.count == 1)
-        #expect(updated?.screenSets[0].layouts["External"]?.type == .empty)
+        #expect(updated.screens.stackKeys.count == 1)
+        #expect(updated.screens.layouts["External"]?.type == .empty)
     }
 }

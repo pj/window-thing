@@ -356,7 +356,18 @@ public struct Layout: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String
     public var quickKey: String?
-    public var screenSets: [ScreenConfig]
+
+    /// What this layout puts on each display, keyed by display name, with
+    /// `$PRIMARY` standing for whichever display is currently the main one.
+    ///
+    /// One map, not a list of alternatives. A layout used to carry several
+    /// "screen sets" and pick between them by scoring how many of each set's
+    /// named displays were plugged in. Supporting a second monitor is now a
+    /// matter of making another layout, so nothing has to be chosen between:
+    /// applying a layout uses whichever of these displays are actually
+    /// attached, and degrades for the ones that are not.
+    public var screens: ScreenConfig
+
     /// Optional so layouts written before this existed still decode; absent
     /// means `.shared`, which is what they behaved as.
     public var displayScope: DisplayScope?
@@ -368,47 +379,55 @@ public struct Layout: Identifiable, Codable, Equatable, Sendable {
         id: UUID = UUID(),
         name: String,
         quickKey: String? = nil,
-        screenSets: [ScreenConfig] = [],
+        screens: ScreenConfig = ScreenConfig(layouts: [:]),
         displayScope: DisplayScope? = nil
     ) {
         self.id = id
         self.name = name
         self.quickKey = quickKey
-        self.screenSets = screenSets
+        self.screens = screens
         self.displayScope = displayScope
     }
 
-    // Find the best matching screen set for current display configuration
-    public func matchingScreenSet(for displays: [Display]) -> ScreenConfig? {
-        guard !screenSets.isEmpty else { return nil }
+    // MARK: - Decoding
 
-        let displayNames = Set(displays.map { $0.name })
-        var bestScreenSet: ScreenConfig?
-        var bestMatchCount = -1
+    private enum CodingKeys: String, CodingKey {
+        case id, name, quickKey, screens, displayScope
+        /// Only read, never written: the old list of alternatives.
+        case screenSets
+    }
 
-        for screenSet in screenSets {
-            let screenSetNames = Set(screenSet.layouts.keys.filter { $0 != ScreenConfig.primaryKey })
+    /// Reads both shapes, and writes only the new one.
+    ///
+    /// A config written before screen sets were removed holds a list. There is
+    /// no information in the list that survives the change — the whole point of
+    /// it was choosing between alternatives — so the most specific set is kept
+    /// and the rest dropped. "Most specific" means the one naming the most
+    /// displays, which is what the old matcher would have preferred when
+    /// everything was plugged in, so a full setup keeps the arrangement it had.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        quickKey = try container.decodeIfPresent(String.self, forKey: .quickKey)
+        displayScope = try container.decodeIfPresent(DisplayScope.self, forKey: .displayScope)
 
-            // A screen set matches if all its named displays are available
-            // (we ignore $PRIMARY since it always matches the main display)
-            guard screenSetNames.isSubset(of: displayNames) || screenSetNames.isEmpty else {
-                continue
-            }
-
-            // Count how many displays this screen set actually uses
-            // This includes both named displays and $PRIMARY
-            let matchCount = screenSetNames.count + (screenSet.layouts.keys.contains(ScreenConfig.primaryKey) ? 1 : 0)
-
-            // Prefer screen sets that use more displays
-            // For ties, prefer the one that appears earlier (first occurrence wins)
-            if matchCount > bestMatchCount {
-                bestScreenSet = screenSet
-                bestMatchCount = matchCount
-            }
+        if let screens = try container.decodeIfPresent(ScreenConfig.self, forKey: .screens) {
+            self.screens = screens
+        } else {
+            let sets = try container.decodeIfPresent([ScreenConfig].self, forKey: .screenSets) ?? []
+            self.screens = sets.max { $0.layouts.count < $1.layouts.count }
+                ?? ScreenConfig(layouts: [:])
         }
+    }
 
-        // Return nil if no valid match found (fallback handled by caller)
-        return bestScreenSet
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(quickKey, forKey: .quickKey)
+        try container.encode(screens, forKey: .screens)
+        try container.encodeIfPresent(displayScope, forKey: .displayScope)
     }
 }
 
@@ -441,5 +460,64 @@ public struct SavedSetup: Identifiable, Codable, Equatable, Sendable {
         self.name = name
         self.createdAt = createdAt
         self.windows = windows
+    }
+}
+
+// MARK: - Resolving against what is plugged in
+
+public extension ScreenConfig {
+    /// The layout to actually place windows with, given the displays present.
+    ///
+    /// A layout names displays that may or may not be attached. Rather than
+    /// choosing between prepared alternatives, one map degrades to fit:
+    ///
+    /// - a display that is attached keeps its tree;
+    /// - a display that is not is dropped, and any window pinned in its tree
+    ///   falls back to the stack rather than being left nowhere;
+    /// - if the stack itself was on a display that is gone, nothing is left to
+    ///   catch those windows, so the whole layout gives way to a single
+    ///   fullscreen stack.
+    ///
+    /// The last rule is why this returns a whole config rather than filtering
+    /// in place: losing the stack is not a local repair, it invalidates the
+    /// arrangement.
+    func resolved(for displays: [Display]) -> ScreenConfig {
+        let attached = Set(displays.map(\.name))
+        let hasMain = displays.contains { $0.isMain }
+
+        func isPresent(_ key: String) -> Bool {
+            key == ScreenConfig.primaryKey ? hasMain : attached.contains(key)
+        }
+
+        let kept = layouts.filter { isPresent($0.key) }
+
+        // Nothing left to place windows on at all.
+        guard !kept.isEmpty else { return .fullscreenStack }
+
+        // The stack going missing is what collapses a layout, not its absence.
+        // A layout that never had one is simply a layout that pins everything
+        // and lets the rest lie where it is; falling back for that would
+        // rearrange screens the user had deliberately left alone.
+        let hadStack = layouts.values.contains { $0.containsStack }
+        let keptStack = kept.values.contains { $0.containsStack }
+        guard !hadStack || keptStack else { return .fullscreenStack }
+
+        return ScreenConfig(layouts: kept)
+    }
+
+    /// A single stack filling the main display: what a layout falls back to
+    /// when it can no longer catch windows anywhere.
+    static var fullscreenStack: ScreenConfig {
+        ScreenConfig(layouts: [primaryKey: LayoutNode(type: .stack, percentage: 100)])
+    }
+}
+
+public extension LayoutNode {
+    /// Whether this tree has somewhere for unpinned windows to land.
+    var containsStack: Bool {
+        if type == .stack { return true }
+        if let columns { return columns.contains { $0.containsStack } }
+        if let rows { return rows.contains { $0.containsStack } }
+        return false
     }
 }

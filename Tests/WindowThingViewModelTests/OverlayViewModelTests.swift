@@ -53,9 +53,7 @@ private class MockConfigManager: ConfigProviding {
 // MARK: - Fixtures
 
 private func makeLayout(name: String, key: String? = nil, root: LayoutNode = .empty()) -> Layout {
-    Layout(name: name, quickKey: key, screenSets: [
-        ScreenConfig(layouts: [ScreenConfig.primaryKey: root])
-    ])
+    Layout(name: name, quickKey: key, screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: root]))
 }
 
 private func makeVM(layouts: [Layout] = []) -> (OverlayViewModel, MockLayoutManager, MockWindowManager) {
@@ -84,7 +82,6 @@ struct StartEditingTests {
         vm.startEditing(layout)
         #expect(vm.editingLayout?.id == layout.id)
         #expect(vm.selectedNodePath.isRoot)
-        #expect(vm.selectedScreenSetIndex == 0)
     }
 
     @Test("startEditing populates editingRootNode from screenSet")
@@ -239,7 +236,7 @@ struct CommitEditTests {
 
         vm.commitEdit(LayoutNode.stackAll())
 
-        let stored = vm.layouts[0].screenSets[0].layouts[ScreenConfig.primaryKey]
+        let stored = vm.layouts[0].screens.layouts[ScreenConfig.primaryKey]
         #expect(stored?.type == .stack)
     }
 
@@ -370,7 +367,7 @@ struct SaveEditsTests {
 
         // Now cancel — should keep the saved state (stack), not revert to empty
         vm.cancelEdits()
-        let root = vm.layouts[0].screenSets[0].layouts[ScreenConfig.primaryKey]
+        let root = vm.layouts[0].screens.layouts[ScreenConfig.primaryKey]
         #expect(root?.type == .stack)
     }
 }
@@ -387,7 +384,7 @@ struct CancelEditsTests {
         vm.commitEdit(LayoutNode.stackAll())
         vm.cancelEdits()
 
-        let root = vm.layouts[0].screenSets[0].layouts[ScreenConfig.primaryKey]
+        let root = vm.layouts[0].screens.layouts[ScreenConfig.primaryKey]
         #expect(root?.type == .empty)
     }
 

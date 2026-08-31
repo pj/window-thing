@@ -73,19 +73,8 @@ public enum LayoutCalculator {
         displays: [Display],
         windows: [Window]
     ) -> [WindowPlacement] {
-        let screenSet: ScreenConfig
-
-        if let matchedScreenSet = layout.matchingScreenSet(for: displays) {
-            screenSet = matchedScreenSet
-        } else {
-            // Fallback: single stack on primary screen when no monitors match
-            screenSet = ScreenConfig(layouts: [
-                ScreenConfig.primaryKey: LayoutNode(type: .stack, percentage: 100)
-            ])
-        }
-
         return calculateScreenSetPlacements(
-            screenSet: screenSet,
+            screenSet: layout.screens.resolved(for: displays),
             displays: displays,
             windows: windows,
             scope: layout.effectiveDisplayScope
@@ -661,6 +650,11 @@ public class LayoutManager: LayoutManaging {
         // second stack — notably when adding a display, which used to default
         // the new monitor to a full stack.
         //
+        // A tree for the main display, so a layout always applies to something
+        // — a config written by hand, or one whose only display was a secondary
+        // that has since been removed, could otherwise describe no screen that
+        // is present.
+        //
         // And structure left behind by editing: containers holding a single
         // child, nested inside each other by repeated splitting and deleting.
         // They draw identically to the child they wrap, so nothing looks wrong
@@ -668,7 +662,7 @@ public class LayoutManager: LayoutManaging {
         // everything walking it has to cope with them. Normalising is
         // geometry-preserving, so this tidies a saved layout without moving any
         // of its dividers.
-        layouts = config.layouts.map { $0.deduplicatingStacks().normalized() }
+        layouts = config.layouts.map { $0.deduplicatingStacks().normalized().ensuringPrimaryDisplay() }
 
         // Restore lastUsedLayout from UserDefaults
         if let uuidString = defaults.string(forKey: "lastUsedLayoutId"),

@@ -587,11 +587,7 @@ struct SpaceOverlayView: View {
                 scheme.ground.opacity(0.42)
                     .ignoresSafeArea()
 
-                if root == nil {
-                    unmappedDisplayNotice
-                } else {
-                    cellCanvas(tiles: tiles, dividers: dividers)
-                }
+                cellCanvas(tiles: tiles, dividers: dividers)
 
                 // The chrome is the one layer that always wins: a cell's own
                 // controls must never draw over the layout bar.
@@ -607,36 +603,6 @@ struct SpaceOverlayView: View {
                     modalScrim { viewModel.hideCellPicker() }
                     CellPickerView(viewModel: viewModel, onDismiss: {})
                 }
-            }
-        }
-    }
-
-    /// A layout describes named screens, so a display it has never seen has no
-    /// tree at all. Rather than a blank surface, offer to add it.
-    private var unmappedDisplayNotice: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "display.trianglebadge.exclamationmark")
-                .font(.system(size: 34))
-                .foregroundColor(.primary.opacity(0.5))
-
-            Text(viewModel.editingLayout.map { "“\($0.name)” doesn't cover this display" }
-                ?? "No layout for this display")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.primary)
-
-            if let name = display?.name {
-                Button {
-                    viewModel.addMonitorToScreenSet(name)
-                } label: {
-                    Text("Add \(name) to this layout")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.35)))
-                        .overlay(Capsule().strokeBorder(Color.accentColor, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -752,7 +718,7 @@ struct SpaceOverlayView: View {
         // is the whole of the chrome, and it is a small control in the corner
         // rather than a band across the top.
         guard showsLayoutBar else { return 0 }
-        let barBottom: CGFloat = showsScopeBar ? 152 : 100
+        let barBottom: CGFloat = 100
         return max(0, barBottom - slot.rect.minY)
     }
 
@@ -815,12 +781,6 @@ struct SpaceOverlayView: View {
 
     // MARK: - Chrome
 
-    /// Only screen sets remain worth choosing here — each monitor now has its
-    /// own overlay, so it never needs selecting.
-    private var showsScopeBar: Bool {
-        (viewModel.editingLayout?.screenSets.count ?? 0) > 1
-    }
-
     /// The layout bar is drawn on the primary display only.
     ///
     /// The surface puts a window on every screen, and repeating the bar on each
@@ -840,10 +800,6 @@ struct SpaceOverlayView: View {
                 VStack(spacing: 12) {
                     LayoutSwitcherBar(viewModel: viewModel)
                         .padding(.top, 24)
-
-                    if showsScopeBar {
-                        ScopeBar(viewModel: viewModel)
-                    }
 
                     Spacer(minLength: 0)
                 }
@@ -946,14 +902,12 @@ struct SpaceOverlayView: View {
     /// A layout has exactly one stack, so making a pane the stack relocates it
     /// rather than creating a second one: the stack moves here, and this pane's
     /// contents take over the position the stack just left.
-    /// Where the layout's one stack currently lives, across every monitor of
-    /// the current screen set.
+    /// Where the layout's one stack currently lives, across every monitor it
+    /// covers.
     private func stackLocation() -> (key: String, path: NodePath)? {
-        guard let layout = viewModel.editingLayout,
-              let screenSet = layout.screenSets[safe: viewModel.selectedScreenSetIndex]
-        else { return nil }
+        guard let layout = viewModel.editingLayout else { return nil }
 
-        for (key, node) in screenSet.layouts {
+        for (key, node) in layout.screens.layouts {
             if let indices = node.findStackLocation() {
                 return (key, NodePath(indices))
             }
@@ -1137,10 +1091,6 @@ private struct CellView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         }
         .padding(6)
-        // Only while the pointer is in the pane. Four buttons on every pane at
-        // all times would be more chrome than the bar they replace.
-        .opacity(isHovered ? 1 : 0)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
         // The preview follows the pointer between buttons, so it has to fade
         // on the edge changing as well as on hover starting and stopping.
         .animation(.easeOut(duration: 0.12), value: hoveredSplit)
@@ -1166,6 +1116,7 @@ private struct CellView: View {
         .help(edge.action)
         .accessibilityLabel(paneLabel("\(edge.action), \(edge.origin)"))
         .onHover { hoveredSplit = $0 ? edge : nil }
+        .hoverRevealed(isHovered)
     }
 
     /// Where the divider will land, drawn on the pane while a split button is
@@ -1223,8 +1174,7 @@ private struct CellView: View {
         .disabled(isStack)
         .help(isStack ? stackLockHelp : "Remove this cell")
         .accessibilityLabel(paneLabel(isStack ? stackLockHelp : "Remove this cell"))
-        .opacity(isHovered ? 1 : 0)
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .hoverRevealed(isHovered)
     }
 
     /// Names an action for the pane it belongs to.
@@ -1304,6 +1254,106 @@ private struct CellView: View {
             onTextFocusChanged: onTextFocusChanged,
             sessionID: sessionID
         )
+    }
+}
+
+/// The chooser's search box.
+///
+/// A view of its own, and that is the point rather than tidiness. The text
+/// being typed lives here; the query the list filters on lives in the parent
+/// and is only updated once typing settles. Two things follow:
+///
+/// - a keystroke re-renders this field and nothing else. When the field sat in
+///   the chooser, every character re-ran the whole body — every app box, every
+///   window thumbnail — and the app dropped keystrokes under it. The interface
+///   tests measured that as a typed "Menu Scratch" arriving as "Menu Scra".
+/// - the list stops moving while you type, because it is not re-filtered on
+///   every character.
+///
+/// Clearing is immediate: there is nothing to settle, and waiting to show the
+/// full list again would only feel slow.
+private struct ChooserSearchField: View {
+    /// The settled query, published to whoever owns the list.
+    @Binding var applied: String
+    /// Changes on each showing; the box is cleared when it does.
+    let sessionID: Int
+    let onSubmit: (String) -> Void
+    /// Lets the window stand down from treating keystrokes as commands.
+    let onFocusChanged: (Bool) -> Void
+
+    @State private var text = ""
+    @State private var settle: Task<Void, Never>?
+    @FocusState private var focused: Bool
+
+    /// Long enough that a burst of typing produces one filter pass, short
+    /// enough that the list feels like it is keeping up.
+    private static let settleDelay = Duration.milliseconds(140)
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary.opacity(0.5))
+
+            TextField("Search apps and windows", text: $text)
+                .accessibilityLabel("Search apps and windows")
+                .accessibilityIdentifier("chooser.search")
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundColor(.primary)
+                .focused($focused)
+                .onSubmit { onSubmit(text) }
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                    apply("", immediately: true)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .overlay(
+            Capsule().strokeBorder(
+                focused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
+                lineWidth: focused ? 2 : 1
+            )
+        )
+        .onChange(of: text) { newValue in
+            apply(newValue, immediately: newValue.isEmpty)
+        }
+        .onChange(of: focused) { onFocusChanged($0) }
+        .onDisappear {
+            settle?.cancel()
+            onFocusChanged(false)
+        }
+        // The window is retained between showings, so this would otherwise
+        // carry a stale query over from last time.
+        .onChange(of: sessionID) { _ in
+            settle?.cancel()
+            text = ""
+            applied = ""
+        }
+    }
+
+    private func apply(_ value: String, immediately: Bool) {
+        settle?.cancel()
+        guard !immediately else {
+            applied = value
+            return
+        }
+        settle = Task {
+            try? await Task.sleep(for: Self.settleDelay)
+            guard !Task.isCancelled else { return }
+            applied = value
+        }
     }
 }
 
@@ -1500,8 +1550,9 @@ private struct PaneChooser: View {
     /// Changes on each showing; the query is cleared when it does.
     let sessionID: Int
 
-    @State private var query = ""
-    @FocusState private var searchFocused: Bool
+    /// What the list filters on — the query as it was a moment ago, not as it
+    /// is being typed. See `ChooserSearchField` for why the two differ.
+    @State private var appliedQuery = ""
 
     private let spacing: CGFloat = 12
     /// Padding inside an app box, both sides.
@@ -1526,7 +1577,12 @@ private struct PaneChooser: View {
             // chooser is already padded past it by `topInset`, so the top of
             // this stack is the top of the usable pane.
             VStack(spacing: spacing) {
-                searchField
+                ChooserSearchField(
+                    applied: $appliedQuery,
+                    sessionID: sessionID,
+                    onSubmit: chooseFirstMatch,
+                    onFocusChanged: onTextFocusChanged
+                )
 
                 ScrollView(showsIndicators: false) {
                 // Lazy: a chooser lists every running app, but only a few rows
@@ -1562,9 +1618,6 @@ private struct PaneChooser: View {
             // down as filtering changed how many rows there were — the results
             // moved while you were typing at them.
             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-            // The window is retained between showings, so this state would
-            // otherwise carry a stale query over from last time.
-            .onChange(of: sessionID) { _ in query = "" }
         }
     }
 
@@ -1601,54 +1654,17 @@ private struct PaneChooser: View {
 
     private static let fadeHeight: CGFloat = 28
 
-    /// Above the list it filters, and scrolling with it.
-    ///
-    /// It spent a while in the pane bar, which kept it in view but cost every
-    /// pane a permanent strip of chrome. With the bar gone it comes back here.
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary.opacity(0.5))
-
-            TextField("Search apps and windows", text: $query)
-                .accessibilityLabel("Search apps and windows")
-                .accessibilityIdentifier("chooser.search")
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(.primary)
-                .focused($searchFocused)
-                .onSubmit { chooseFirstMatch() }
-
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary.opacity(0.4))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Capsule().fill(Color.primary.opacity(0.08)))
-        .overlay(
-            Capsule().strokeBorder(
-                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.15),
-                lineWidth: searchFocused ? 2 : 1
-            )
-        )
-        .onChange(of: searchFocused) { focused in onTextFocusChanged(focused) }
-        .onDisappear { onTextFocusChanged(false) }
-    }
-
     /// Return picks the obvious result: the single matching window if the query
     /// narrowed to one, otherwise the first app still standing.
-    private func chooseFirstMatch() {
-        let matches = filteredGroups
+    ///
+    /// Takes the text rather than reading `appliedQuery`: pressing Return the
+    /// instant you finish typing should act on what you typed, not on whatever
+    /// the debounce had caught up to.
+    private func chooseFirstMatch(_ text: String) {
+        let matches = ChooserMatch.filtered(
+            ChooserMatch.groups(apps: apps, windows: windows),
+            query: text
+        )
         guard let first = matches.first else { return }
         if matches.count == 1, first.windows.count == 1 {
             onChooseWindow(first.windows[0])
@@ -1803,7 +1819,7 @@ private struct PaneChooser: View {
     private var filteredGroups: [AppGroup] {
         ChooserMatch.filtered(
             ChooserMatch.groups(apps: apps, windows: windows),
-            query: query
+            query: appliedQuery
         )
     }
 
@@ -2232,6 +2248,34 @@ private struct LayoutSwitcherBar: View {
     }
 }
 
+/// Shows a pane's chrome only while the pointer is in it, without dropping it
+/// out of the accessibility tree.
+///
+/// `.opacity(0)` culls a view from that tree outright. This project has now
+/// paid for that twice: once when a hover-revealed trash cost twelve interface
+/// assertions, and again when these split buttons went hover-only and pane 2's
+/// controls became unreachable the moment the pointer was anywhere else — the
+/// tests could split a pane and then not see what they had made.
+///
+/// Clipping to nothing hides it just as completely and leaves it addressable,
+/// which is what VoiceOver and anything driving the interface need.
+private struct HoverRevealed: ViewModifier {
+    let revealed: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: revealed ? nil : 0, height: revealed ? nil : 0)
+            .clipped()
+            .animation(.easeOut(duration: 0.12), value: revealed)
+    }
+}
+
+extension View {
+    func hoverRevealed(_ revealed: Bool) -> some View {
+        modifier(HoverRevealed(revealed: revealed))
+    }
+}
+
 /// Cursor feedback for a hover region.
 ///
 /// `push()`/`pop()` is the usual pairing, but a layout chip can be deleted
@@ -2274,6 +2318,9 @@ private struct LayoutPill: View {
     @State private var nameHovering = false
     @State private var pillHovering = false
     @State private var confirmingDelete = false
+    /// Local to the chip while typing. On the view model it was `@Published`,
+    /// so each keystroke re-rendered every pane on every screen.
+    @State private var renameDraft = ""
     @FocusState private var nameFocused: Bool
 
     /// Mirrors the dialog's state onto the view model so the window stands down
@@ -2352,7 +2399,7 @@ private struct LayoutPill: View {
             keyChip
 
             if isRenaming {
-                TextField("Name", text: $viewModel.renameDraft)
+                TextField("Name", text: $renameDraft)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
@@ -2360,7 +2407,13 @@ private struct LayoutPill: View {
                     .focused($nameFocused)
                     .onSubmit { viewModel.commitRename() }
                     .onExitCommand { viewModel.cancelRename() }
-                    .onAppear { nameFocused = true }
+                    .onAppear {
+                        renameDraft = viewModel.renameStartingName
+                        nameFocused = true
+                    }
+                    // Mirrored, not published: a click outside the field also
+                    // commits, and that handler cannot see this chip's state.
+                    .onChange(of: renameDraft) { viewModel.pendingRenameText = $0 }
                     // Unlabelled, this field was invisible to VoiceOver and to
                     // anything driving the interface — a text box with no name.
                     .accessibilityLabel("Layout name")
@@ -2565,50 +2618,6 @@ private struct LayoutPill: View {
         var updated = layout
         updated.quickKey = key
         viewModel.updateLayoutMeta(updated)
-    }
-}
-
-// MARK: - Scope bar
-
-/// Screen set and monitor selection. Only shown for layouts that actually have
-/// more than one of either — most layouts never see it.
-private struct ScopeBar: View {
-    @ObservedObject var viewModel: OverlayViewModel
-
-    var body: some View {
-        HStack(spacing: 8) {
-            if let sets = viewModel.editingLayout?.screenSets, sets.count > 1 {
-                ForEach(Array(sets.enumerated()), id: \.offset) { index, _ in
-                    chip(
-                        title: "Set \(index + 1)",
-                        active: viewModel.selectedScreenSetIndex == index,
-                        enabled: true
-                    ) { viewModel.selectScreenSet(index) }
-                }
-
-            }
-            // No monitor chips: every screen draws its own overlay now, so
-            // there's nothing left to switch between here.
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        // Matches the layout bar directly above it — they read as one cluster.
-        .background(Capsule().fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
-        .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
-    }
-
-    private func chip(title: String, active: Bool, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 12, weight: active ? .semibold : .regular))
-                .foregroundColor(.primary.opacity(enabled ? (active ? 1 : 0.7) : 0.35))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color.primary.opacity(active ? 0.2 : 0.0)))
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
     }
 }
 

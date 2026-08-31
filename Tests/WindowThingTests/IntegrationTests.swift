@@ -74,11 +74,9 @@ struct IntegrationTests {
         Layout(
             name: "Test Fullscreen",
             quickKey: nil,
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .pinned(app: nil, bundleId: nil, windowTitles: nil, percentage: 100)
                 ])
-            ]
         )
     }
 
@@ -87,14 +85,12 @@ struct IntegrationTests {
         Layout(
             name: "Test Left Half",
             quickKey: nil,
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .pinned(app: nil, bundleId: nil, windowTitles: nil, percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
     }
 
@@ -103,14 +99,12 @@ struct IntegrationTests {
         Layout(
             name: "Test Right Half",
             quickKey: nil,
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .empty(percentage: 50),
                         .pinned(app: nil, bundleId: nil, windowTitles: nil, percentage: 50)
                     ])
                 ])
-            ]
         )
     }
 
@@ -119,14 +113,12 @@ struct IntegrationTests {
         Layout(
             name: "Test Split",
             quickKey: nil,
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: .columns([
                         .empty(percentage: 50),
                         .empty(percentage: 50)
                     ])
                 ])
-            ]
         )
     }
 }
@@ -180,11 +172,9 @@ struct PrimaryDisplayLayoutTests {
 
         return Layout(
             name: "Test Layout",
-            screenSets: [
-                ScreenConfig(layouts: [
+            screens: ScreenConfig(layouts: [
                     ScreenConfig.primaryKey: node
                 ])
-            ]
         )
     }
 
