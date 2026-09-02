@@ -76,9 +76,16 @@ if [ -n "$NEW_VERSION" ]; then
     # package.sh reads ./VERSION, so the bump has to land on disk before
     # building. A dry run puts it back on the way out — it is meant to leave the
     # tree exactly as it found it.
-    ORIGINAL_VERSION="$(cat VERSION)"
+    ORIGINAL_VERSION="$(tr -d '[:space:]' < VERSION)"
     echo "$NEW_VERSION" > VERSION
-    restore_version() { printf '%s' "$ORIGINAL_VERSION" > VERSION; }
+    # Restored from git rather than rewritten from a captured string, so the
+    # file comes back byte for byte. Rewriting it with printf dropped the
+    # trailing newline — the version read the same, the file did not, and the
+    # tree was left dirty by a dry run that promises not to touch it. The next
+    # real release then aborted on its own clean-tree check. Safe because that
+    # check has already passed by this point, so the committed VERSION is
+    # exactly what was there a moment ago.
+    restore_version() { git checkout -- VERSION; }
 fi
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
