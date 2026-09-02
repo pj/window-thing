@@ -186,7 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // or a reconcile after the displays change — goes through the manager,
         // so the icon follows from there rather than from each of those paths
         // remembering to update it.
-        layoutManager.onCurrentLayoutChange = { [weak self] _ in
+        layoutManager.onActiveLayoutChange = { [weak self] _ in
             self?.updateStatusIcon()
         }
 
@@ -213,7 +213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusIcon() {
         guard let button = statusItem?.button else { return }
 
-        if let layout = layoutManager.currentLayout {
+        if let layout = layoutManager.activeLayout {
             button.image = NSImage.layoutIcon(
                 for: layout, size: NSSize(width: 18, height: 18))
             // Named for VoiceOver and for anything scripting the menu bar: the
@@ -309,7 +309,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // the same whatever is applied and the layouts all sit at the
                 // top level, so without this the menu is a list of things that
                 // could happen with no sign of which one already has.
-                item.state = layout.id == layoutManager.currentLayout?.id ? .on : .off
+                item.state = layout.id == layoutManager.activeLayout?.id ? .on : .off
                 menu.addItem(item)
             }
         }

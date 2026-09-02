@@ -64,7 +64,7 @@ struct ActiveLayoutSignalTests {
             manager.setLayouts([one])
 
             var announced: [String?] = []
-            manager.onCurrentLayoutChange = { announced.append($0?.name) }
+            manager.onActiveLayoutChange = { announced.append($0?.name) }
 
             manager.applyLayout(one)
 
@@ -80,7 +80,7 @@ struct ActiveLayoutSignalTests {
             manager.setLayouts([one, two])
 
             var announced: [String?] = []
-            manager.onCurrentLayoutChange = { announced.append($0?.name) }
+            manager.onActiveLayoutChange = { announced.append($0?.name) }
 
             manager.applyLayout(one)
             manager.applyLayout(two)
@@ -100,7 +100,7 @@ struct ActiveLayoutSignalTests {
             manager.setLayouts([one])
 
             var count = 0
-            manager.onCurrentLayoutChange = { _ in count += 1 }
+            manager.onActiveLayoutChange = { _ in count += 1 }
 
             manager.applyLayout(one)
             manager.applyLayout(one)
@@ -117,7 +117,7 @@ struct ActiveLayoutSignalTests {
             manager.applyLayout(one)
 
             var announced: [String?] = []
-            manager.onCurrentLayoutChange = { announced.append($0?.name) }
+            manager.onActiveLayoutChange = { announced.append($0?.name) }
 
             one.name = "Renamed"
             manager.updateLayout(one)
@@ -127,18 +127,78 @@ struct ActiveLayoutSignalTests {
         }
     }
 
-    @Test("Nothing is announced before a layout is applied")
-    func silentUntilApplied() {
+    @Test("With nothing ever applied there is no active layout")
+    func noneUntilEverApplied() {
         withManager { manager in
-            var count = 0
-            manager.onCurrentLayoutChange = { _ in count += 1 }
-
             manager.setLayouts([layout("One"), layout("Two")])
 
-            // Loading layouts is not applying one. The menu bar shows its
-            // generic mark until something actually takes effect.
-            #expect(count == 0)
-            #expect(manager.currentLayout == nil)
+            // A first run has nothing to show, and the menu bar falls back to
+            // its generic mark rather than picking a layout arbitrarily.
+            #expect(manager.activeLayout == nil)
+        }
+    }
+
+    @Test("A relaunched app shows the layout last applied")
+    func survivesRelaunch() {
+        // The bug this exists for: nothing is re-applied at startup, so
+        // `currentLayout` is nil however many times a layout has been applied
+        // before. Reading only that left the menu bar showing its generic mark
+        // after every restart, which is exactly what a user sees.
+        // One store shared by both managers, standing in for the defaults
+        // surviving a quit. In memory, so the test leaves no plist behind.
+        let defaults = EphemeralDefaults()
+
+        let one = layout("One")
+        let two = layout("Two")
+        var config = AppConfig.default
+        config.layouts = [one, two]
+
+        let first = LayoutManager(windowManager: MockWindowManager(), userDefaults: defaults)
+        first.setLayouts([one, two])
+        first.applyLayout(two)
+
+        // A second manager over the same defaults stands in for a relaunch.
+        let relaunched = LayoutManager(windowManager: MockWindowManager(), userDefaults: defaults)
+        relaunched.loadLayouts(from: config)
+
+        #expect(relaunched.currentLayout == nil, "nothing is applied at startup")
+        #expect(relaunched.activeLayout?.name == "Two", "but the last one used is still what is in effect")
+    }
+
+    @Test("Restoring the last used layout announces it")
+    func announcesOnRestore() {
+        let defaults = EphemeralDefaults()
+
+        let one = layout("One")
+        var config = AppConfig.default
+        config.layouts = [one]
+
+        let first = LayoutManager(windowManager: MockWindowManager(), userDefaults: defaults)
+        first.setLayouts([one])
+        first.applyLayout(one)
+
+        let relaunched = LayoutManager(windowManager: MockWindowManager(), userDefaults: defaults)
+        var announced: [String?] = []
+        relaunched.onActiveLayoutChange = { announced.append($0?.name) }
+        relaunched.loadLayouts(from: config)
+
+        #expect(announced == ["One"])
+    }
+
+    @Test("Applying a layout announces it once, not twice")
+    func announcesOnceOnApply() {
+        // `applyLayout` writes both `currentLayout` and `lastUsedLayout`, and
+        // both can announce. The second must stay quiet or every apply
+        // redraws the menubar twice.
+        withManager { manager in
+            let one = layout("One")
+            manager.setLayouts([one])
+
+            var count = 0
+            manager.onActiveLayoutChange = { _ in count += 1 }
+            manager.applyLayout(one)
+
+            #expect(count == 1)
         }
     }
 }

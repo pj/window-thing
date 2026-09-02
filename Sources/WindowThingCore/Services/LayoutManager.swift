@@ -618,11 +618,31 @@ public class LayoutManager: LayoutManaging {
     public private(set) var layouts: [Layout] = []
     public private(set) var savedSetups: [SavedSetup] = []
     public internal(set) var currentLayout: Layout? {  // Allow internal modification for dynamic layout changes
-        didSet { notifyCurrentLayoutChanged() }
+        didSet { notifyActiveLayoutChanged() }
     }
 
-    /// Called when the applied layout changes, so the menubar can show which
-    /// one is in effect.
+    /// The most recently applied layout. Persisted across app restarts via UserDefaults.
+    public private(set) var lastUsedLayout: Layout? {
+        didSet {
+            // Only when this is what `activeLayout` resolves to. Applying a
+            // layout sets `currentLayout` first, and that has already announced
+            // the same layout by the time this runs.
+            if currentLayout == nil { notifyActiveLayoutChanged() }
+        }
+    }
+
+    /// The layout to present as the one in effect.
+    ///
+    /// `currentLayout` is only set by applying a layout, so it is nil for a
+    /// freshly launched app however many times a layout has been applied
+    /// before — nothing is re-applied at startup. `lastUsedLayout` is persisted
+    /// for exactly that gap, and is what the layout surface already selects
+    /// when it opens, so falling through to it keeps the menubar agreeing with
+    /// the surface instead of showing nothing until something is applied.
+    public var activeLayout: Layout? { currentLayout ?? lastUsedLayout }
+
+    /// Called when the layout shown as active changes, so the menubar can
+    /// follow it.
     ///
     /// Fires on re-assignment rather than only when the identity changes: a
     /// layout edited while it is applied keeps its id but not its shape, and
@@ -631,20 +651,17 @@ public class LayoutManager: LayoutManaging {
     /// Always delivered on the main thread. `applyLayout` deliberately updates
     /// this on whatever thread called it, so leaving the hop to each consumer
     /// would mean an AppKit call off the main thread the first time one forgot.
-    public var onCurrentLayoutChange: ((Layout?) -> Void)?
+    public var onActiveLayoutChange: ((Layout?) -> Void)?
 
-    private func notifyCurrentLayoutChanged() {
-        guard let handler = onCurrentLayoutChange else { return }
-        let layout = currentLayout
+    private func notifyActiveLayoutChanged() {
+        guard let handler = onActiveLayoutChange else { return }
+        let layout = activeLayout
         if Thread.isMainThread {
             handler(layout)
         } else {
             DispatchQueue.main.async { handler(layout) }
         }
     }
-
-    /// The most recently applied layout. Persisted across app restarts via UserDefaults.
-    public private(set) var lastUsedLayout: Layout?
 
     private let windowManager: WindowManaging
     private let defaults: UserDefaults
