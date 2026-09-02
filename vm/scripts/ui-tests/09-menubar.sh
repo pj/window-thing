@@ -59,6 +59,62 @@ end tell
 OSA
 }
 
+# The mark drawn against a named item — a tick when it is on, "none" when it
+# is not. The tick lives in the Accessibility attribute rather than the title,
+# so it cannot be read out of the item names.
+menu_mark_of() {
+    osascript 2>/dev/null <<OSA
+tell application "System Events"
+  tell process "WindowThing"
+    click menu bar item 1 of menu bar 2
+    delay 1
+    set answer to "none"
+    repeat with mi in menu items of menu 1 of menu bar item 1 of menu bar 2
+      if name of mi is "$1" then
+        try
+          set mc to value of attribute "AXMenuItemMarkChar" of mi
+          if mc is not missing value and mc is not "" then set answer to mc
+        end try
+      end if
+    end repeat
+    key code 53
+    return answer
+  end tell
+end tell
+OSA
+}
+
+# Applies a layout the way a person would: from the menu itself.
+click_menu_item() {
+    osascript 2>/dev/null <<OSA
+tell application "System Events"
+  tell process "WindowThing"
+    click menu bar item 1 of menu bar 2
+    delay 1
+    click menu item "$1" of menu 1 of menu bar item 1 of menu bar 2
+  end tell
+end tell
+OSA
+    sleep 1
+}
+
+# What the menu bar extra itself says it is showing. The icon is drawn from the
+# applied layout, and a picture cannot be asserted on directly — this reads the
+# description that goes with it, which is also what VoiceOver announces.
+menu_bar_description() {
+    osascript 2>/dev/null <<'OSA'
+tell application "System Events"
+  tell process "WindowThing"
+    try
+      return description of menu bar item 1 of menu bar 2
+    on error
+      return "none"
+    end try
+  end tell
+end tell
+OSA
+}
+
 expect_menu_has() {
     local items
     items="$(menu_items)"
@@ -103,6 +159,34 @@ expect_menu_has "Fullscreen"       "a configured layout is listed"
 expect_menu_has "Half Split"       "so is the second"
 expect_menu_has "Layout Editor"    "the menu offers the layout surface"
 expect_menu_has "Quit WindowThing" "the menu is fully populated"
+
+info "Menubar: it marks the layout that is applied"
+# The menubar icon is the same whatever is applied, so before this the menu was
+# a list of things that could happen with no sign of which one already had.
+# Asserted by applying one and watching the mark move, rather than by reading a
+# single item: a mark that is simply always drawn would pass the first check.
+click_menu_item "Half Split"
+
+expect_equal "$(menu_mark_of "Half Split")" "✓" "the applied layout is marked"
+expect_equal "$(menu_mark_of "Fullscreen")" "none"    "a layout that is not applied is unmarked"
+
+# The menu bar icon is drawn from the applied layout too, so it moves with it.
+half_split_desc="$(menu_bar_description)"
+note "menu bar reports: '${half_split_desc}'"
+case "$half_split_desc" in
+    *"Half Split"*) pass "the menu bar names the applied layout" ;;
+    *)              fail "the menu bar does not name the applied layout (was '${half_split_desc}')" ;;
+esac
+
+click_menu_item "Fullscreen"
+
+expect_equal "$(menu_mark_of "Fullscreen")" "✓" "applying another layout marks it instead"
+expect_equal "$(menu_mark_of "Half Split")" "none"    "and clears the mark from the previous one"
+
+case "$(menu_bar_description)" in
+    *"Fullscreen"*) pass "the menu bar follows the layout that is applied" ;;
+    *)              fail "the menu bar still reports '$(menu_bar_description)'" ;;
+esac
 
 info "Menubar: Layout Editor carries the activation shortcut"
 # The shortcut is read from the configured hotkey rather than written into the

@@ -176,11 +176,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage.menuBarIcon()
-            button.image?.accessibilityDescription = "WindowThing"
             button.action = #selector(statusItemClicked)
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        updateStatusIcon()
+
+        // Whatever applies a layout — this menu, a global hotkey, the surface,
+        // or a reconcile after the displays change — goes through the manager,
+        // so the icon follows from there rather than from each of those paths
+        // remembering to update it.
+        layoutManager.onCurrentLayoutChange = { [weak self] _ in
+            self?.updateStatusIcon()
         }
 
         // Rebuilt every time it opens rather than assembled once at launch.
@@ -191,6 +198,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem?.menu = menu
         rebuildStatusMenu(menu)
+    }
+
+    /// Draw the applied layout in the menu bar.
+    ///
+    /// The icon used to be the same picture whatever was applied, which made
+    /// the menu bar say that WindowThing was running and nothing else. Drawn
+    /// from the layout itself, so it needs no upkeep as layouts are added or
+    /// edited, and it stays a template image so the menu bar can invert it for
+    /// a dark background the way every other status item does.
+    ///
+    /// Falls back to the generic mark before anything has been applied — a
+    /// blank menu bar would read as the app having failed to start.
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+
+        if let layout = layoutManager.currentLayout {
+            button.image = NSImage.layoutIcon(
+                for: layout, size: NSSize(width: 18, height: 18))
+            // Named for VoiceOver and for anything scripting the menu bar: the
+            // shape carries the meaning visually and nothing otherwise says
+            // which layout it is.
+            button.image?.accessibilityDescription = "WindowThing — \(layout.name)"
+            button.toolTip = layout.name
+        } else {
+            button.image = NSImage.menuBarIcon()
+            button.image?.accessibilityDescription = "WindowThing"
+            button.toolTip = "WindowThing"
+        }
     }
 
     /// The window "Move Window to…" will act on.
@@ -270,6 +305,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.representedObject = layout
                 item.target = self
                 item.image = NSImage.layoutIcon(for: layout)
+                // Ticked when this is the layout in effect. The menubar icon is
+                // the same whatever is applied and the layouts all sit at the
+                // top level, so without this the menu is a list of things that
+                // could happen with no sign of which one already has.
+                item.state = layout.id == layoutManager.currentLayout?.id ? .on : .off
                 menu.addItem(item)
             }
         }

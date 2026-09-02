@@ -617,7 +617,31 @@ public class LayoutManager: LayoutManaging {
 
     public private(set) var layouts: [Layout] = []
     public private(set) var savedSetups: [SavedSetup] = []
-    public internal(set) var currentLayout: Layout?  // Allow internal modification for dynamic layout changes
+    public internal(set) var currentLayout: Layout? {  // Allow internal modification for dynamic layout changes
+        didSet { notifyCurrentLayoutChanged() }
+    }
+
+    /// Called when the applied layout changes, so the menubar can show which
+    /// one is in effect.
+    ///
+    /// Fires on re-assignment rather than only when the identity changes: a
+    /// layout edited while it is applied keeps its id but not its shape, and
+    /// the icon draws the shape.
+    ///
+    /// Always delivered on the main thread. `applyLayout` deliberately updates
+    /// this on whatever thread called it, so leaving the hop to each consumer
+    /// would mean an AppKit call off the main thread the first time one forgot.
+    public var onCurrentLayoutChange: ((Layout?) -> Void)?
+
+    private func notifyCurrentLayoutChanged() {
+        guard let handler = onCurrentLayoutChange else { return }
+        let layout = currentLayout
+        if Thread.isMainThread {
+            handler(layout)
+        } else {
+            DispatchQueue.main.async { handler(layout) }
+        }
+    }
 
     /// The most recently applied layout. Persisted across app restarts via UserDefaults.
     public private(set) var lastUsedLayout: Layout?
