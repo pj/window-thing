@@ -48,6 +48,25 @@ struct ManageableWindowTests {
             subrole: nil, foundInAXList: false, axListReadable: true))
     }
 
+    @Test("An app that lists no windows at all loses every window")
+    func emptyAXListDropsEverything() {
+        // Why the window lookup cannot stop at kAXWindows. Finder answers that
+        // attribute with success and an empty array while its window sits in
+        // AXChildren as an ordinary resizable AXWindow. An empty list is
+        // readable, so this verdict is reached rather than the fail-open one
+        // below — every Finder window was classified as a popover and silently
+        // dropped from every layout, with no error raised anywhere.
+        //
+        // The verdict is correct given its inputs. The fix belongs where the
+        // list is gathered, so keep this pinned: it is what makes an
+        // enumeration bug fatal rather than merely lossy.
+        #expect(!WindowManager.isManageable(
+            subrole: nil, foundInAXList: false, axListReadable: true))
+        #expect(!WindowManager.isManageable(
+            subrole: kAXStandardWindowSubrole as String,
+            foundInAXList: false, axListReadable: true))
+    }
+
     // MARK: - Failing open
 
     @Test("An app that can't be asked keeps all of its windows")

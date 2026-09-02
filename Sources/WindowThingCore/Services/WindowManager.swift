@@ -376,12 +376,43 @@ public class WindowManager: WindowManaging {
     }
 
     /// The app's Accessibility window list, or nil when it cannot be read.
+    ///
+    /// Asks for `kAXWindows` and falls back to the application element's
+    /// children when that comes back empty. Finder is why: it answers
+    /// `kAXWindows` with success and an empty array while its window sits in
+    /// `AXChildren` as a perfectly ordinary, resizable `AXWindow`. Every path
+    /// that looked windows up through `kAXWindows` alone therefore found
+    /// nothing for Finder and left its windows where they were, while
+    /// reporting no error anywhere.
     private static func axWindows(ofProcess pid: pid_t) -> [AXUIElement]? {
         let appElement = AXUIElementCreateApplication(pid)
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             appElement, kAXWindowsAttribute as CFString, &ref) == .success else { return nil }
-        return ref as? [AXUIElement] ?? []
+
+        let windows = ref as? [AXUIElement] ?? []
+        if !windows.isEmpty { return windows }
+
+        // Only reached for an app that reports no windows, so the extra round
+        // trip is not paid by apps that answer the question properly.
+        return childWindows(of: appElement)
+    }
+
+    /// Windows found among an application element's children.
+    private static func childWindows(of appElement: AXUIElement) -> [AXUIElement] {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            appElement, kAXChildrenAttribute as CFString, &ref) == .success,
+              let children = ref as? [AXUIElement] else { return [] }
+
+        // A menu bar and a scroll area sit alongside the window in Finder's
+        // children, so this cannot take them wholesale.
+        return children.filter { child in
+            var roleRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                child, kAXRoleAttribute as CFString, &roleRef) == .success else { return false }
+            return roleRef as? String == kAXWindowRole as String
+        }
     }
 
     private func cachedTitle(for windowID: CGWindowID) -> String? {
@@ -530,13 +561,7 @@ public class WindowManager: WindowManaging {
     }
 
     public func setWindowFrame(pid: pid_t, windowTitle: String? = nil, frame: WindowFrame) -> Bool {
-        let appElement = AXUIElementCreateApplication(pid)
-
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success,
-              let windows = windowsRef as? [AXUIElement] else {
+        guard let windows = Self.axWindows(ofProcess: pid), !windows.isEmpty else {
             return false
         }
 
@@ -626,18 +651,12 @@ public class WindowManager: WindowManaging {
         // The AX round trips stay outside the lock — they reach into another
         // process and can block, and holding a lock across that would serialise
         // every caller behind the slowest app.
-        let appElement = AXUIElementCreateApplication(pid)
-        var windowsRef: CFTypeRef?
         var byId: [CGWindowID: AXUIElement] = [:]
 
-        if AXUIElementCopyAttributeValue(
-            appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-           let windows = windowsRef as? [AXUIElement] {
-            for window in windows {
-                var wid: CGWindowID = 0
-                if _AXUIElementGetWindow(window, &wid) == .success {
-                    byId[wid] = window
-                }
+        for window in Self.axWindows(ofProcess: pid) ?? [] {
+            var wid: CGWindowID = 0
+            if _AXUIElementGetWindow(window, &wid) == .success {
+                byId[wid] = window
             }
         }
 
@@ -652,18 +671,62 @@ public class WindowManager: WindowManaging {
         return byId[windowId]
     }
 
+    /// Report what a window actually did with the frame it was given.
+    ///
+    /// Two Accessibility reads per window on top of the writes, so it is off
+    /// unless asked for: `--probe-frames`. Worth having because a window that
+    /// refuses a frame looks exactly like one that was never asked, and the
+    /// settle tracker then records the refusal as the best it can do.
+    static let verifyFrames = CommandLine.arguments.contains("--probe-frames")
+
+    private static func readFrame(of window: AXUIElement) -> WindowFrame? {
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success
+        else { return nil }
+
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posRef as! AXValue, .cgPoint, &point)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        return WindowFrame(x: point.x, y: point.y, width: size.width, height: size.height)
+    }
+
     private func applyFrame(_ frame: WindowFrame, to window: AXUIElement) -> Bool {
+        var positionError: AXError = .success
         var position = CGPoint(x: frame.x, y: frame.y)
         if let positionValue = AXValueCreate(.cgPoint, &position) {
-            AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
+            positionError = AXUIElementSetAttributeValue(
+                window, kAXPositionAttribute as CFString, positionValue)
         }
 
+        var sizeError: AXError = .success
         var size = CGSize(width: frame.width, height: frame.height)
         if let sizeValue = AXValueCreate(.cgSize, &size) {
-            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+            sizeError = AXUIElementSetAttributeValue(
+                window, kAXSizeAttribute as CFString, sizeValue)
         }
 
-        return true
+        if Self.verifyFrames {
+            let got = Self.readFrame(of: window)
+            let landed = got.map {
+                String(format: "%.0f,%.0f %.0fx%.0f", $0.x, $0.y, $0.width, $0.height)
+            } ?? "unreadable"
+            let wanted = String(format: "%.0f,%.0f %.0fx%.0f",
+                                frame.x, frame.y, frame.width, frame.height)
+            if got == nil || got!.needsMove(to: frame) {
+                Self.perfLog.warning(
+                    "frame refused: wanted \(wanted, privacy: .public), got \(landed, privacy: .public) (setPosition \(positionError.rawValue, privacy: .public), setSize \(sizeError.rawValue, privacy: .public))")
+            } else {
+                Self.perfLog.info("frame applied: \(wanted, privacy: .public)")
+            }
+        }
+
+        // The writes are reported rather than the read-back, so this says
+        // whether the window accepted the instruction, not whether it obeyed —
+        // a window with a minimum size returns success and stays put.
+        return positionError == .success && sizeError == .success
     }
 
     // MARK: - Focus Management
