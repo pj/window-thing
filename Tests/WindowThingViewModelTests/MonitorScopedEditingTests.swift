@@ -414,6 +414,45 @@ struct LayoutListEditTests {
         #expect(vm.renamingLayoutId == nil)
     }
 
+    @Test("Abandoning a new layout's name leaves it callable Untitled")
+    func cancellingANewLayoutNamesIt() {
+        // `addLayout` persists the layout blank and opens the field to be
+        // filled in. Cancelling there used to leave a layout with no name at
+        // all: an empty row in the menubar, an unlabelled chip on the surface,
+        // and nothing to click to rename it but its own missing title.
+        let (vm, _, _) = makeVM(layouts: three())
+
+        vm.addLayout()
+        vm.cancelRename()
+
+        #expect(vm.layouts.last?.name == "Untitled")
+        #expect(vm.renamingLayoutId == nil)
+    }
+
+    @Test("Cancelling still leaves an existing name alone")
+    func cancellingKeepsARealName() {
+        // The rescue above must not turn into a rename of every layout whose
+        // rename is cancelled.
+        let (vm, _, _) = makeVM(layouts: three())
+
+        vm.beginRename(vm.layouts[0])
+        vm.pendingRenameText = ""
+        vm.cancelRename()
+
+        #expect(vm.layouts[0].name == "One")
+    }
+
+    @Test("A name of only spaces is treated as no name")
+    func whitespaceOnlyNameIsRescued() {
+        let (vm, _, _) = makeVM(layouts: three())
+
+        vm.addLayout()
+        vm.pendingRenameText = "   "
+        vm.cancelRename()
+
+        #expect(vm.layouts.last?.name == "Untitled")
+    }
+
     @Test("Renaming a layout doesn't make it the one being edited")
     func renameDoesNotStealTheCursor() {
         // `updateLayoutMeta` assigns `editingLayout`, which used to switch the

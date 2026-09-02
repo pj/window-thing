@@ -686,7 +686,9 @@ public class LayoutManager: LayoutManaging {
         // everything walking it has to cope with them. Normalising is
         // geometry-preserving, so this tidies a saved layout without moving any
         // of its dividers.
-        layouts = config.layouts.map { $0.deduplicatingStacks().normalized().ensuringPrimaryDisplay() }
+        layouts = config.layouts.map {
+            $0.deduplicatingStacks().normalized().ensuringPrimaryDisplay().ensuringName()
+        }
 
         // Restore lastUsedLayout from UserDefaults
         if let uuidString = defaults.string(forKey: "lastUsedLayoutId"),

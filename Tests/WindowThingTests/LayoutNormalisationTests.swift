@@ -101,3 +101,42 @@ struct LayoutNormalisationTests {
         #expect(out.screens.layouts["Studio"]?.type == .stack)
     }
 }
+@Suite("Blank layout names are repaired on load")
+struct LayoutNameRepairTests {
+
+    private func named(_ name: String) -> Layout {
+        Layout(name: name, screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()]))
+    }
+
+    @Test("A blank name becomes Untitled")
+    func blankIsNamed() {
+        // Configs written by an earlier build can already hold one of these, so
+        // repairing it on load matters as much as not creating new ones.
+        #expect(named("").ensuringName().name == "Untitled")
+    }
+
+    @Test("A name of only whitespace becomes Untitled")
+    func whitespaceIsNamed() {
+        #expect(named("   ").ensuringName().name == "Untitled")
+    }
+
+    @Test("A real name is left exactly as it is")
+    func realNameSurvives() {
+        #expect(named("Thirds").ensuringName().name == "Thirds")
+        #expect(named(" Padded ").ensuringName().name == " Padded ")
+    }
+
+    @Test("Repairing the name changes nothing else")
+    func onlyTheNameChanges() {
+        let original = Layout(
+            name: "",
+            screens: ScreenConfig(layouts: [
+                ScreenConfig.primaryKey: .columns([.stackAll(percentage: 60), .empty(percentage: 40)])
+            ]))
+
+        let repaired = original.ensuringName()
+
+        #expect(repaired.id == original.id)
+        #expect(repaired.screens.layouts == original.screens.layouts)
+    }
+}

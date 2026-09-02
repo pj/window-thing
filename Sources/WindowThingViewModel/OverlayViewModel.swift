@@ -385,7 +385,7 @@ public class OverlayViewModel: ObservableObject {
         guard let index = layouts.firstIndex(where: { $0.id == id }) else { return }
 
         let trimmed = pendingRenameText.trimmingCharacters(in: .whitespaces)
-        layouts[index].name = trimmed.isEmpty ? "Untitled" : trimmed
+        layouts[index].name = trimmed.isEmpty ? Layout.fallbackName : trimmed
 
         // Renaming a layout must not make it the one being edited.
         if editingLayout?.id == id {
@@ -396,7 +396,25 @@ public class OverlayViewModel: ObservableObject {
     }
 
     public func cancelRename() {
+        guard let id = renamingLayoutId else { return }
         renamingLayoutId = nil
+
+        // A cancelled rename normally leaves the name alone. The exception is a
+        // layout that has no name yet: `addLayout` persists it blank and opens
+        // the field to be filled in, so cancelling there used to leave a layout
+        // that could never be named again — a blank row in the menubar and an
+        // unlabelled chip on the surface, with nothing to click but its own
+        // empty title.
+        guard let index = layouts.firstIndex(where: { $0.id == id }),
+              layouts[index].name.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return }
+
+        layouts[index].name = Layout.fallbackName
+        if editingLayout?.id == id {
+            editingLayout?.name = layouts[index].name
+        }
+        layoutManager.updateLayout(layouts[index])
+        persistLayouts()
     }
 
     // MARK: - Hotkey Recording

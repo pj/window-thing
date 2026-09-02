@@ -136,4 +136,21 @@ public extension Layout {
             screens.containsStack ? .empty() : .stackAll()
         return copy
     }
+
+    /// The name a layout gets when it has none.
+    public static let fallbackName = "Untitled"
+
+    /// Every layout is nameable, because a layout is picked by its name.
+    ///
+    /// A layout with a blank name is unusable rather than merely untidy: it is
+    /// an empty row in the menubar and a chip with nothing written on it, and
+    /// the only handle for renaming it is the name it does not have. Applied on
+    /// load so a config that already carries one — written by an earlier build,
+    /// or by hand — is repaired rather than carried forward.
+    func ensuringName() -> Layout {
+        guard name.trimmingCharacters(in: .whitespaces).isEmpty else { return self }
+        var copy = self
+        copy.name = Self.fallbackName
+        return copy
+    }
 }

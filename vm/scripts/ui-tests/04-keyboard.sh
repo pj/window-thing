@@ -26,18 +26,23 @@ $AX key escape >/dev/null 2>&1
 expect_no_control "Layout name" "escape closes the rename field"
 expect_control "New layout"     "the surface survives cancelling a rename"
 
+# Escape above abandoned the rename of a brand new layout, which leaves it
+# named "Untitled" rather than blank. It used to keep the empty name it was
+# created with, which made it unusable: an empty row in the menubar, and a chip
+# whose only handle for renaming it was the name it did not have.
+expect_control "Delete layout Untitled" "an abandoned name falls back to Untitled"
+
 info "Keyboard: escape cancels a confirmation rather than closing the surface"
-# The layout left unnamed by the cancelled rename above.
-$AX press "Delete layout " >/dev/null 2>&1
+$AX press "Delete layout Untitled" >/dev/null 2>&1
 if $AX wait "Delete Layout" 5 >/dev/null 2>&1; then
-    pass "the unnamed layout still asks before deleting"
+    pass "the rescued layout still asks before deleting"
     $AX key escape >/dev/null 2>&1
     expect_no_control "Delete Layout" "escape dismisses the confirmation"
     expect_control "New layout"       "the surface survives cancelling a delete"
 else
-    fail "no confirmation appeared for the unnamed layout"
+    fail "no confirmation appeared for the rescued layout"
 fi
 
 info "Keyboard: tidying up"
-teardown_scratch_layout ""
+teardown_scratch_layout "Untitled"
 teardown_scratch_layout "Keyboard Scratch"
