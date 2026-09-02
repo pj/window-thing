@@ -214,8 +214,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let button = statusItem?.button else { return }
 
         if let layout = layoutManager.activeLayout {
-            button.image = NSImage.layoutIcon(
-                for: layout, size: NSSize(width: 18, height: 18))
+            // Sized by height so the menu bar keeps its rhythm; the width
+            // follows from the monitor proportions.
+            button.image = NSImage.layoutIcon(for: layout, height: 15)
             // Named for VoiceOver and for anything scripting the menu bar: the
             // shape carries the meaning visually and nothing otherwise says
             // which layout it is.
@@ -304,7 +305,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.keyEquivalentModifierMask = [.control, .option]
                 item.representedObject = layout
                 item.target = self
-                item.image = NSImage.layoutIcon(for: layout)
+                item.image = NSImage.layoutIcon(for: layout, height: 14)
                 // Ticked when this is the layout in effect. The menubar icon is
                 // the same whatever is applied and the layouts all sit at the
                 // top level, so without this the menu is a list of things that

@@ -133,7 +133,24 @@ extension NSImage {
 
     /// Creates a menu item icon representing a layout structure
     /// The icon shows a simplified view of how windows are arranged
-    static func layoutIcon(for layout: Layout, size: NSSize = NSSize(width: 16, height: 16)) -> NSImage {
+    /// Proportions for a layout preview.
+    ///
+    /// Drawn on a widescreen canvas rather than a square one, so the bezel
+    /// reads as a monitor rather than a picture frame — and so a two-column
+    /// split looks like two windows side by side instead of two tall slivers.
+    /// The layout chips on the surface already use these proportions; the menu
+    /// and the menu bar were square, which is what made the same layout look
+    /// like a different shape depending on where it was shown.
+    static let previewAspectRatio: CGFloat = 16.0 / 10.0
+
+    /// A layout preview of a given height, widened to a monitor's proportions.
+    static func layoutIcon(for layout: Layout, height: CGFloat) -> NSImage {
+        layoutIcon(
+            for: layout,
+            size: NSSize(width: (height * previewAspectRatio).rounded(), height: height))
+    }
+
+    static func layoutIcon(for layout: Layout, size: NSSize = NSSize(width: 22, height: 14)) -> NSImage {
         let image = NSImage(size: size, flipped: false) { rect in
             NSColor.black.setStroke()
             NSColor.black.setFill()
