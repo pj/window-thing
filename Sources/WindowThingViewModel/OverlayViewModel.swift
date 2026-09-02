@@ -17,7 +17,7 @@ public class OverlayViewModel: ObservableObject {
     @Published public var layouts: [Layout] = []
 
     // Editor state
-    @Published public var renamingLayoutId: UUID?
+    @Published public var renamingLayoutId: UUID? { didSet { flushDeferredThumbnailUpdate() } }
     @Published public var recordingHotkeyLayoutId: UUID?
     @Published public var editingLayout: Layout?
     @Published public var selectedMonitorKey: String = ScreenConfig.primaryKey
@@ -61,7 +61,9 @@ public class OverlayViewModel: ObservableObject {
     /// cleared the flag while the rename field still had it. The next keystroke
     /// was then read as a command, and space closes the surface: typing a
     /// layout's name dismissed the window being typed in.
-    @Published public var isSearchFieldFocused: Bool = false
+    @Published public var isSearchFieldFocused: Bool = false {
+        didSet { flushDeferredThumbnailUpdate() }
+    }
 
     /// True while any text field inside the surface holds focus. The overlay
     /// window intercepts plain keystrokes as commands — a bare letter is a cell
@@ -123,8 +125,39 @@ public class OverlayViewModel: ObservableObject {
             }
         }
         WindowThumbnailCache.shared.onUpdate = { [weak self] in
-            self?.thumbnailRevision += 1
+            self?.noteThumbnailUpdate()
         }
+    }
+
+    /// Record that a fresh set of thumbnails has landed.
+    ///
+    /// Internal rather than private so the deferral can be tested without a
+    /// capture loop, a screen, or Screen Recording permission.
+    func noteThumbnailUpdate() {
+        // Bumping this invalidates every thumbnail tile on the surface, and a
+        // chooser showing a busy machine's windows is well over a hundred of
+        // them — measured at 400-600ms of main thread to repaint. Text is
+        // delivered on that same thread, so a repaint landing mid-word silently
+        // swallows the keystrokes typed during it.
+        //
+        // Held rather than dropped: the capture that just landed is still the
+        // freshest there is, so it is applied the moment the field gives up
+        // focus.
+        guard !isTextFieldFocused else {
+            thumbnailUpdateDeferred = true
+            return
+        }
+        thumbnailRevision += 1
+    }
+
+    /// A thumbnail refresh that arrived while someone was typing.
+    private var thumbnailUpdateDeferred = false
+
+    /// Apply a held thumbnail refresh once the last text field lets go.
+    private func flushDeferredThumbnailUpdate() {
+        guard !isTextFieldFocused, thumbnailUpdateDeferred else { return }
+        thumbnailUpdateDeferred = false
+        thumbnailRevision += 1
     }
 
     public func refreshRunningApps() {

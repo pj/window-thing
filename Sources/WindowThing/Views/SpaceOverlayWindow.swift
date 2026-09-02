@@ -2487,7 +2487,14 @@ private struct LayoutPill: View {
                     }
                     // Mirrored, not published: a click outside the field also
                     // commits, and that handler cannot see this chip's state.
-                    .onChange(of: renameDraft) { viewModel.pendingRenameText = $0 }
+                    .onChange(of: renameDraft) {
+                        // Logged so dropped keystrokes can be told apart from a
+                        // rename that arrived and was then lost: this fires per
+                        // character that actually reaches the field, so a gap
+                        // here is a keystroke the app never saw.
+                        RenderProbe.keystroke("rename", value: $0)
+                        viewModel.pendingRenameText = $0
+                    }
                     // Unlabelled, this field was invisible to VoiceOver and to
                     // anything driving the interface — a text box with no name.
                     .accessibilityLabel("Layout name")

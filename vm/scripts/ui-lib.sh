@@ -103,6 +103,28 @@ expect_equal() {
     if [ "$1" = "$2" ]; then pass "$3"; else fail "$3 (expected '$2', got '$1')"; fi
 }
 
+# Prints every control whose label starts with a prefix.
+#
+# For when an assertion says a control is missing and the useful question is
+# what is there instead — "no control 'Delete layout Renamed By Test'" does not
+# say whether the layout is called something else or absent altogether.
+note_controls_matching() {
+    local prefix="$1"
+    local found
+    found="$($AX list 2>/dev/null | grep -F "$prefix" | sed 's/^ *//' | tr '\n' '|')"
+    note "controls matching '$prefix': ${found:-<none>}"
+}
+
+# Like expect_control, but says what it found when it fails.
+expect_control_verbose() {
+    if $AX wait "$1" 4 >/dev/null 2>&1; then
+        pass "$2"
+    else
+        fail "$2 (no control '$1')"
+        note_controls_matching "$3"
+    fi
+}
+
 # --------------------------------------------------------------------------- #
 # App lifecycle                                                                 #
 # --------------------------------------------------------------------------- #
@@ -148,7 +170,10 @@ launch_with_surface() {
     quit_app
     # No -n: the previous instance is gone, and forcing a second one is what
     # produced two processes for the driver to choose between.
-    if ! open_app --args --screenshot space; then
+    # WT_EXTRA_ARGS lets a diagnostic run add flags (--probe-render) without
+    # editing the tests, so the run being measured is the same one that fails.
+    # shellcheck disable=SC2086
+    if ! open_app --args --screenshot space ${WT_EXTRA_ARGS:-}; then
         fail "the app could not be launched"
         return 1
     fi

@@ -45,20 +45,42 @@ enum RenderProbe {
 
     private static let crumbLock = NSLock()
     private static var _lastBreadcrumb = "none"
+    private static var _lastBreadcrumbAt: CFAbsoluteTime = 0
 
     /// Record what the main thread is about to do. Deliberately trivial — a
     /// string store — so it can sit on paths that run constantly.
     static func breadcrumb(_ label: String) {
         guard isEnabled else { return }
+        let now = CFAbsoluteTimeGetCurrent()
         crumbLock.lock()
         _lastBreadcrumb = label
+        _lastBreadcrumbAt = now
         crumbLock.unlock()
     }
 
-    static var lastBreadcrumb: String {
+    /// The last breadcrumb *and how old it is*.
+    ///
+    /// The age is the point. Breadcrumbs are never cleared, so a stall with no
+    /// view work in it still reports whichever body ran last — possibly seconds
+    /// earlier and entirely unrelated. Without the age that reads as a
+    /// confident attribution to the wrong place, which is worse than no
+    /// attribution at all. A crumb a few ms old was plausibly the cause; one
+    /// several seconds old says the stall happened somewhere uninstrumented.
+    static var lastBreadcrumb: (label: String, ageMs: Double) {
         crumbLock.lock()
         defer { crumbLock.unlock() }
-        return _lastBreadcrumb
+        guard _lastBreadcrumbAt > 0 else { return (_lastBreadcrumb, -1) }
+        return (_lastBreadcrumb, (CFAbsoluteTimeGetCurrent() - _lastBreadcrumbAt) * 1000)
+    }
+
+    /// Record a character landing in a text field.
+    ///
+    /// The interface driver types at a fixed interval, so the gaps between
+    /// these lines say directly whether keystrokes are being dropped and how
+    /// that lines up with the stalls reported below.
+    static func keystroke(_ field: String, value: String) {
+        guard isEnabled else { return }
+        log.info("keystroke \(field, privacy: .public) -> \(value.count, privacy: .public) chars: '\(value, privacy: .public)'")
     }
 
     // MARK: - Counting
@@ -76,13 +98,23 @@ enum RenderProbe {
     }
 
     /// Report and reset the tallies.
-    static func flushTallies(_ context: String) {
+    ///
+    /// `always` matters when reporting a stall: "no view bodies were built" is
+    /// itself the finding, since it rules out rendering as the cause. Staying
+    /// silent there would leave the stall looking unexplained rather than
+    /// explained-by-elimination.
+    static func flushTallies(_ context: String, always: Bool = false) {
         countLock.lock()
         let snapshot = counts
         counts.removeAll()
         countLock.unlock()
 
-        guard !snapshot.isEmpty else { return }
+        if snapshot.isEmpty {
+            if always {
+                log.info("\(context, privacy: .public): no view bodies built")
+            }
+            return
+        }
         let summary = snapshot
             .sorted { $0.value > $1.value }
             .map { "\($0.key)=\($0.value)" }
@@ -130,7 +162,7 @@ final class MainThreadStallDetector {
                 if ms >= self.thresholdMs {
                     let text = String(format: "%.1f", ms)
                     RenderProbe.log.warning("main thread stalled \(text, privacy: .public)ms")
-                    RenderProbe.flushTallies("during stall")
+                    RenderProbe.flushTallies("during stall", always: true)
                 }
             default:
                 break
@@ -197,10 +229,11 @@ final class MainThreadWatchdog {
                     semaphore.wait()
                     let ms = (CFAbsoluteTimeGetCurrent() - sent) * 1000
                     let text = String(format: "%.1f", ms)
-                    let location = RenderProbe.lastBreadcrumb
+                    let crumb = RenderProbe.lastBreadcrumb
+                    let age = String(format: "%.0f", crumb.ageMs)
                     RenderProbe.log.warning(
-                        "main thread blocked \(text, privacy: .public)ms (last breadcrumb: \(location, privacy: .public))")
-                    RenderProbe.flushTallies("while blocked")
+                        "main thread blocked \(text, privacy: .public)ms (last breadcrumb: \(crumb.label, privacy: .public), \(age, privacy: .public)ms ago)")
+                    RenderProbe.flushTallies("while blocked", always: true)
                 }
 
                 usleep(self.sampleIntervalMs * 1000)

@@ -20,6 +20,13 @@ public class WindowManager: WindowManaging {
     private var displayCache: [Display] = []
     private var pollTimer: Timer?
 
+    /// Where the window-server list is fetched, off the main thread.
+    private let pollQueue = DispatchQueue(label: "com.windowthing.window-poll", qos: .userInitiated)
+
+    /// Whether a tick is between its off-main fetch and its main-thread finish.
+    /// Main thread only.
+    private var pollInFlight = false
+
     /// Guards the two caches. They are written from the main thread by
     /// `getWindows`/`getDisplays` and read from the layout-apply workers, which
     /// run several processes' frame writes at once.
@@ -31,6 +38,56 @@ public class WindowManager: WindowManaging {
     /// changes for a given window, so it is asked once when the window is first
     /// seen rather than on every refresh.
     private var manageableCache: [CGWindowID: Bool] = [:]
+
+    /// Fingerprint of the window list the cache was last built from, and when.
+    ///
+    /// `getWindows` runs twice a second on the main thread, and most of its
+    /// cost is Accessibility round trips into other processes — one per app to
+    /// list its windows, plus a position read per window — paid whenever a
+    /// window's `kCGWindowName` comes back empty. Almost every tick asks all of
+    /// that again to arrive at exactly the answer it already had: measured at
+    /// 88-91ms per tick, on the thread that is also handling keystrokes.
+    ///
+    /// `CGWindowListCopyWindowInfo` itself is cheap, so its contents make a
+    /// serviceable "has anything moved, opened or closed" check. When the
+    /// fingerprint matches, the expensive half is skipped and the cached list
+    /// returned as-is.
+    private var lastWindowFingerprint: Int?
+    private var lastWindowBuild: CFAbsoluteTime = 0
+
+    /// When titles were last read through Accessibility, tracked separately
+    /// from the rebuild time on purpose.
+    ///
+    /// Timing the refresh off `lastWindowBuild` would mean that while anything
+    /// is moving — a drag, a layout being applied — every tick rebuilds, resets
+    /// the clock, and the age never reaches the limit, so titles would go
+    /// stale indefinitely in exactly the situation where windows are most
+    /// active. This clock only moves when titles are actually re-read.
+    private var lastTitleRefresh: CFAbsoluteTime = 0
+
+    /// How long a matching fingerprint may go on standing in for a real refresh.
+    ///
+    /// A window whose title changes without moving — switching tabs, say — is
+    /// invisible to the fingerprint when the title only exists behind
+    /// Accessibility. Rebuilding anyway on this cadence bounds how stale a
+    /// title can get, while still skipping the great majority of ticks.
+    static let windowCacheMaxAge: CFAbsoluteTime = 5
+
+    /// Window titles that had to be read through Accessibility, by CGWindowID.
+    ///
+    /// `kCGWindowName` is empty for every window unless Screen Recording has
+    /// been granted, so on most machines every window falls through to the
+    /// Accessibility path: list the owning app's windows, then read each one's
+    /// position to find the match. Measured at 33ms of a 35ms rebuild, for 28
+    /// windows, and it was being paid twice a second to arrive at titles that
+    /// had not changed.
+    ///
+    /// A window new to this pass is never served from here, so a window
+    /// appearing is still titled immediately; only re-reading is avoided.
+    private var titleCache: [CGWindowID: String] = [:]
+
+    /// Bundle identifiers by process, which do not change for a running process.
+    private var bundleIdCache: [pid_t: String?] = [:]
 
     private func cachedWindow(id: CGWindowID) -> Window? {
         cacheLock.lock()
@@ -105,20 +162,106 @@ public class WindowManager: WindowManaging {
 
     // MARK: - Window Management
 
-    public func getWindows() -> [Window] {
-        var windows: [Window] = []
-
+    /// Ask the window server what is on screen.
+    ///
+    /// Split out because it is synchronous IPC and, measured, by far the most
+    /// expensive thing the poll does — 88ms, 122ms, 192ms on consecutive ticks
+    /// with everything else cached away. Nothing here touches this class's
+    /// state, so the poll can make this call off the main thread and leave only
+    /// the cheap half on it.
+    static func copyWindowList() -> [[String: Any]] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return windows
+        return CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    }
+
+    public func getWindows() -> [Window] {
+        let start = CFAbsoluteTimeGetCurrent()
+        let list = Self.copyWindowList()
+        return buildWindows(from: list, listMs: (CFAbsoluteTimeGetCurrent() - start) * 1000)
+    }
+
+    /// A cheap summary of what is on screen, used to decide whether the
+    /// expensive half of a rebuild can be skipped.
+    ///
+    /// Covers what a placement depends on: which windows exist, where they are,
+    /// how big they are, and what the window server says they are called. A
+    /// change the fingerprint misses is a change the caches never notice, so it
+    /// errs towards noticing too much — a reordering of the same windows counts
+    /// as a change, which costs one needless rebuild rather than risking a
+    /// stale answer.
+    static func fingerprint(of windowList: [[String: Any]]) -> Int {
+        var hasher = Hasher()
+        for info in windowList {
+            hasher.combine(info[kCGWindowNumber as String] as? CGWindowID ?? 0)
+            hasher.combine(info[kCGWindowName as String] as? String ?? "")
+            if let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] {
+                hasher.combine(bounds["X"] ?? 0)
+                hasher.combine(bounds["Y"] ?? 0)
+                hasher.combine(bounds["Width"] ?? 0)
+                hasher.combine(bounds["Height"] ?? 0)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    /// Turn a window-server listing into the windows a layout can place.
+    ///
+    /// Main thread only: it reads the config, and the caches it fills are also
+    /// read by the layout-apply workers.
+    func buildWindows(from windowList: [[String: Any]], listMs: Double) -> [Window] {
+        var windows: [Window] = []
+        let callStart = CFAbsoluteTimeGetCurrent() - (listMs / 1000)
+
+        // Cheap first: if nothing on screen has changed since the last build,
+        // the answer is the one already cached and none of the Accessibility
+        // work below needs doing.
+        let fingerprint = Self.fingerprint(of: windowList)
+
+        cacheLock.lock()
+        let unchanged = lastWindowFingerprint == fingerprint
+        let now = CFAbsoluteTimeGetCurrent()
+        let age = now - lastWindowBuild
+        let titleAge = now - lastTitleRefresh
+        let cached = windowCache
+        cacheLock.unlock()
+
+        if unchanged, age < Self.windowCacheMaxAge {
+            // Reported from the cheap path too. A tick can be slow without
+            // rebuilding anything — asking the window server for the list is
+            // itself work — and a breakdown that only covers rebuilds makes
+            // that look like time going nowhere.
+            let earlyMs = (CFAbsoluteTimeGetCurrent() - callStart) * 1000
+            if earlyMs > Self.slowPollThresholdMs {
+                let total = String(format: "%.1f", earlyMs)
+                let list = String(format: "%.1f", listMs)
+                Self.perfLog.warning(
+                    "slow window list (nothing changed): \(total, privacy: .public)ms, of which the window-server list was \(list, privacy: .public)ms")
+            }
+            return cached
         }
 
+        // A rebuild forced by the age limit is the one that refreshes titles. A
+        // rebuild forced by something moving reuses them: what moved is the
+        // geometry, and re-reading every title to discover that they are all
+        // unchanged is the cost this is here to avoid.
+        let refreshTitles = titleAge >= Self.windowCacheMaxAge
+
+        let buildStart = callStart
         let minSize = ConfigManager.shared.config.minimumWindowSize
         let exclusions = ConfigManager.shared.config.effectiveExclusions
         // Cache AX window elements per PID to avoid repeated API calls
         // Outer nil: not fetched yet. Inner nil: the app could not be asked, so
         // its windows fail open rather than silently dropping out of layouts.
         var axWindowsByPID: [pid_t: [AXUIElement]?] = [:]
+
+        // Where a rebuild's time actually goes. Each of these is a synchronous
+        // round trip into another process, so counting them says whether a slow
+        // tick is one expensive app or a hundred cheap calls.
+        var axListCalls = 0
+        var axTitleCalls = 0
+        var runningAppLookups = 0
+        var axMs: Double = 0
+        var scanned = 0
 
         for windowInfo in windowList {
             guard let windowID = windowInfo[kCGWindowNumber as String] as? CGWindowID,
@@ -151,9 +294,13 @@ public class WindowManager: WindowManaging {
             // subrole, and cached per window, so the round trip is paid once
             // when a window first appears rather than on every refresh — most
             // passes ask nothing at all.
+            scanned += 1
             let alreadyJudged = manageableCacheContains(windowID)
             if !alreadyJudged, axWindowsByPID[ownerPID] == nil {
+                let t = CFAbsoluteTimeGetCurrent()
                 axWindowsByPID[ownerPID] = Self.axWindows(ofProcess: ownerPID)
+                axMs += (CFAbsoluteTimeGetCurrent() - t) * 1000
+                axListCalls += 1
             }
             guard isStandardWindow(
                 pid: ownerPID, windowId: windowID,
@@ -165,16 +312,29 @@ public class WindowManager: WindowManaging {
             // kCGWindowName requires Screen Recording permission and may be empty.
             // Fall back to AX API, matching by window position.
             if title.isEmpty {
-                if axWindowsByPID[ownerPID] == nil {
-                    axWindowsByPID[ownerPID] = Self.axWindows(ofProcess: ownerPID)
-                }
-                if let axWindows = axWindowsByPID[ownerPID] ?? nil {
-                    title = axTitle(from: axWindows, matchingX: x, y: y) ?? ""
+                if !refreshTitles, let known = cachedTitle(for: windowID) {
+                    title = known
+                } else {
+                    let t = CFAbsoluteTimeGetCurrent()
+                    if axWindowsByPID[ownerPID] == nil {
+                        axWindowsByPID[ownerPID] = Self.axWindows(ofProcess: ownerPID)
+                        axListCalls += 1
+                    }
+                    if let axWindows = axWindowsByPID[ownerPID] ?? nil {
+                        title = axTitle(from: axWindows, matchingX: x, y: y) ?? ""
+                    }
+                    axMs += (CFAbsoluteTimeGetCurrent() - t) * 1000
+                    axTitleCalls += 1
+                    cacheTitle(title, for: windowID)
                 }
             }
 
-            // Get bundle ID
-            let bundleId = NSRunningApplication(processIdentifier: ownerPID)?.bundleIdentifier
+            let bundleId = cachedBundleId(for: ownerPID) ?? {
+                runningAppLookups += 1
+                let resolved = NSRunningApplication(processIdentifier: ownerPID)?.bundleIdentifier
+                cacheBundleId(resolved, for: ownerPID)
+                return resolved
+            }()
 
             let candidate = Window(
                 id: windowID,
@@ -196,9 +356,22 @@ public class WindowManager: WindowManaging {
 
         cacheLock.lock()
         windowCache = windows
+        lastWindowFingerprint = fingerprint
+        lastWindowBuild = CFAbsoluteTimeGetCurrent()
+        if refreshTitles { lastTitleRefresh = lastWindowBuild }
         cacheLock.unlock()
+
         pruneManageableCache(keeping: Set(
             windowList.compactMap { $0[kCGWindowNumber as String] as? CGWindowID }))
+
+        let buildMs = (CFAbsoluteTimeGetCurrent() - buildStart) * 1000
+        if buildMs > Self.slowPollThresholdMs {
+            let total = String(format: "%.1f", buildMs)
+            let ax = String(format: "%.1f", axMs)
+            let list = String(format: "%.1f", listMs)
+            Self.perfLog.warning(
+                "slow window rebuild: \(total, privacy: .public)ms for \(scanned, privacy: .public) windows (window-server list \(list, privacy: .public)ms, accessibility \(ax, privacy: .public)ms over \(axListCalls, privacy: .public) window-list calls and \(axTitleCalls, privacy: .public) title lookups, \(runningAppLookups, privacy: .public) bundle-id lookups)")
+        }
         return windows
     }
 
@@ -211,6 +384,33 @@ public class WindowManager: WindowManaging {
         return ref as? [AXUIElement] ?? []
     }
 
+    private func cachedTitle(for windowID: CGWindowID) -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return titleCache[windowID]
+    }
+
+    private func cacheTitle(_ title: String, for windowID: CGWindowID) {
+        cacheLock.lock()
+        titleCache[windowID] = title
+        cacheLock.unlock()
+    }
+
+    /// Nested optional deliberately: the outer says whether the process has been
+    /// asked, the inner whether it has a bundle id. Flattening them would make
+    /// an app without one get asked again on every pass.
+    private func cachedBundleId(for pid: pid_t) -> String?? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return bundleIdCache[pid]
+    }
+
+    private func cacheBundleId(_ bundleId: String?, for pid: pid_t) {
+        cacheLock.lock()
+        bundleIdCache[pid] = bundleId
+        cacheLock.unlock()
+    }
+
     private func manageableCacheContains(_ windowID: CGWindowID) -> Bool {
         cacheLock.lock()
         defer { cacheLock.unlock() }
@@ -221,6 +421,15 @@ public class WindowManager: WindowManaging {
     private func pruneManageableCache(keeping live: Set<CGWindowID>) {
         cacheLock.lock()
         manageableCache = manageableCache.filter { live.contains($0.key) }
+        titleCache = titleCache.filter { live.contains($0.key) }
+        cacheLock.unlock()
+    }
+
+    /// Forget a process's cached bundle id. Called when an app terminates, so a
+    /// pid reused by a different app is not answered from the old one.
+    public func forgetProcess(_ pid: pid_t) {
+        cacheLock.lock()
+        bundleIdCache.removeValue(forKey: pid)
         cacheLock.unlock()
     }
 
@@ -549,18 +758,59 @@ public class WindowManager: WindowManaging {
     public func startPolling() {
         let interval = TimeInterval(ConfigManager.shared.config.pollIntervalMs) / 1000.0
         pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            let t0 = CFAbsoluteTimeGetCurrent()
-            self?.refreshCache()
-            self?.onCacheRefresh?()
+            guard let self else { return }
 
-            // Silent while healthy. This runs twice a second on the main
-            // thread, so anything slow here is felt directly as dropped frames
-            // — worth saying so rather than logging every tick into the noise.
-            let elapsedMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            if elapsedMs > WindowManager.slowPollThresholdMs {
-                let ms = String(format: "%.1f", elapsedMs)
-                WindowManager.perfLog.warning("slow poll tick: \(ms, privacy: .public)ms on the main thread")
+            // A tick still in flight means the window server is answering more
+            // slowly than the poll asks. Starting another would queue work
+            // faster than it drains and land every reply on the main thread at
+            // once — the opposite of what moving it off there is for.
+            guard !self.pollInFlight else { return }
+            self.pollInFlight = true
+
+            self.pollQueue.async { [weak self] in
+                guard let self else { return }
+                let tList = CFAbsoluteTimeGetCurrent()
+                let list = Self.copyWindowList()
+                let listMs = (CFAbsoluteTimeGetCurrent() - tList) * 1000
+
+                DispatchQueue.main.async {
+                    self.finishPollTick(list: list, listMs: listMs)
+                }
             }
+        }
+    }
+
+    /// The half of a poll tick that has to be on the main thread.
+    private func finishPollTick(list: [[String: Any]], listMs: Double) {
+        defer { pollInFlight = false }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        _ = getDisplays()
+        let tDisplays = CFAbsoluteTimeGetCurrent()
+        _ = buildWindows(from: list, listMs: 0)
+        let tWindows = CFAbsoluteTimeGetCurrent()
+        onCacheRefresh?()
+        let tDone = CFAbsoluteTimeGetCurrent()
+
+        // Silent while healthy. This runs twice a second on the main thread, so
+        // anything slow here is felt directly as dropped frames — worth saying
+        // so rather than logging every tick into the noise.
+        //
+        // Broken down by phase because the total on its own does not say who to
+        // blame: the two cache reads and the reconcile that follows them have
+        // entirely separate causes, and a tick that is slow for one of them
+        // looks exactly like a tick that is slow for another. The window-server
+        // time is reported alongside but is no longer part of the total — it is
+        // now paid off the main thread, and the two being confusable is what
+        // sent the first pass at this looking in the wrong place.
+        let elapsedMs = (tDone - t0) * 1000
+        if elapsedMs > WindowManager.slowPollThresholdMs {
+            let ms = String(format: "%.1f", elapsedMs)
+            let d = String(format: "%.1f", (tDisplays - t0) * 1000)
+            let w = String(format: "%.1f", (tWindows - tDisplays) * 1000)
+            let r = String(format: "%.1f", (tDone - tWindows) * 1000)
+            let l = String(format: "%.1f", listMs)
+            WindowManager.perfLog.warning(
+                "slow poll tick: \(ms, privacy: .public)ms on the main thread (displays \(d, privacy: .public)ms, windows \(w, privacy: .public)ms, reconcile \(r, privacy: .public)ms; the window-server list took \(l, privacy: .public)ms off it)")
         }
     }
 
@@ -619,7 +869,14 @@ public class WindowManager: WindowManaging {
             forName: NSWorkspace.didTerminateApplicationNotification,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            // Drop the dead process's cached bundle id first: pids are reused,
+            // and answering for a new app out of the old one's entry would
+            // quietly mis-match every pin that names it.
+            if let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication {
+                self?.forgetProcess(app.processIdentifier)
+            }
             self?.refreshCache()
             self?.onCacheRefresh?()
         }

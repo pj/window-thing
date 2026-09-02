@@ -21,9 +21,19 @@ expect_control "Layout name" "a new layout opens its rename field"
 info "Layouts: renaming"
 RENAMED="Renamed By Test"
 drive type "Layout name" "$RENAMED"
+
+# Read the field back before committing. Without this the only signal is the
+# outcome, which cannot say whether the characters failed to arrive or arrived
+# and the commit did not apply them — two different bugs that look identical
+# from the far end.
+typed="$($AX value "Layout name" 2>/dev/null)"
+note "field holds: '${typed}'"
+expect_value "Layout name" "$RENAMED" "the whole name arrives in the field"
+
 drive confirm
 
-expect_control "Delete layout $RENAMED" "the typed name reaches the layout"
+expect_control_verbose "Delete layout $RENAMED" \
+    "the typed name reaches the layout" "Delete layout "
 expect_no_control "Layout name"         "submitting closes the rename field"
 
 info "Layouts: a cancelled delete"
