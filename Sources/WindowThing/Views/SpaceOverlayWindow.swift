@@ -293,21 +293,27 @@ final class SpaceOverlayWindow: NSWindow {
             return true
         }
 
-        // ⌘1…⌘9 apply a layout. Plain digits are reserved for cell addresses,
-        // which are the surface's primary verb.
-        if modifiers == [.command],
-           let chars = event.charactersIgnoringModifiers,
-           let digit = Int(chars), digit >= 1, digit <= viewModel.layouts.count {
-            viewModel.selectLayout(at: digit - 1)
-            return true
-        }
+        // Nothing here for layout shortcuts. They are Control-Option hotkeys
+        // registered with the system, so they already work while this window is
+        // open — the same keystroke, doing the same thing, wherever you are.
+        // The surface used to map ⌘1…⌘9 to positions instead, which is how it
+        // came to disagree with the label on its own chips.
 
         if viewModel.isAppSelectorVisible {
             if let handled = handleAppSelectorKey(event), handled { return true }
             return false   // let letters and backspace reach the search field
         }
 
-        if viewModel.isCellPickerVisible { return false }
+        // While hints are up, a single key is the whole gesture.
+        if viewModel.isCellPickerVisible {
+            guard modifiers.isEmpty,
+                  let typed = event.charactersIgnoringModifiers?.lowercased(),
+                  let address = CellAddress(string: typed),
+                  viewModel.pickerCells.contains(where: { $0.address == address })
+            else { return true }   // swallow everything else; this is a mode
+            viewModel.selectCell(address)
+            return true
+        }
 
         guard modifiers.isEmpty, let chars = event.charactersIgnoringModifiers else { return false }
 
@@ -600,11 +606,79 @@ struct SpaceOverlayView: View {
                 }
 
                 if viewModel.isCellPickerVisible {
-                    modalScrim { viewModel.hideCellPicker() }
-                    CellPickerView(viewModel: viewModel, onDismiss: {})
+                    cellHints
+                        .zIndex(20)
                 }
             }
         }
+    }
+
+    /// Where each cell is, labelled with the key that sends the window there.
+    ///
+    /// Drawn over the canvas at the cells' true positions rather than listed in
+    /// a sheet. The address is only useful as an answer to "which key means
+    /// *there*", and a list makes you translate a name back into a place; the
+    /// surface is already showing the layout where it really is.
+    ///
+    /// Only while moving. Labelling every pane permanently is the chrome that
+    /// came off the layout cards for being noise the rest of the time.
+    private var cellHints: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { viewModel.hideCellPicker() }
+
+                ForEach(hintsForThisDisplay, id: \.address.stringValue) { cell in
+                    hintBadge(cell.address.stringValue, enabled: true)
+                        .position(centre(of: cell.frame, in: geo.size))
+                }
+
+                // Extending the layout is offered in the same gesture: the
+                // place you want may not be a cell yet.
+                ForEach(Array(ghostsForThisDisplay.enumerated()), id: \.offset) { _, ghost in
+                    hintBadge(ghost.direction == .trailingColumn ? "→" : "↓",
+                              enabled: !ghost.isDisabled)
+                        .position(centre(of: ghost.estimatedFrame, in: geo.size))
+                }
+            }
+        }
+    }
+
+    private var hintsForThisDisplay: [IndexedCell] {
+        guard let name = display?.name else { return [] }
+        return viewModel.pickerCells.filter { $0.displayName == name }
+    }
+
+    private var ghostsForThisDisplay: [GhostCellPosition] {
+        guard let name = display?.name else { return [] }
+        return viewModel.pickerGhostPositions.filter { $0.displayName == name }
+    }
+
+    /// Cell frames are global; this window covers one display.
+    private func centre(of frame: WindowFrame, in size: CGSize) -> CGPoint {
+        let origin = display?.frame ?? WindowFrame(x: 0, y: 0, width: 0, height: 0)
+        return CGPoint(
+            x: frame.x + frame.width / 2 - origin.x,
+            y: frame.y + frame.height / 2 - origin.y
+        )
+    }
+
+    private func hintBadge(_ label: String, enabled: Bool) -> some View {
+        Text(label)
+            .font(.system(size: 34, weight: .bold, design: .rounded))
+            .foregroundColor(enabled ? .primary : .primary.opacity(0.35))
+            .frame(minWidth: 68, minHeight: 68)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(enabled ? 0.96 : 0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(enabled ? Color.accentColor : Color.primary.opacity(0.2),
+                                  lineWidth: enabled ? 3 : 1)
+            )
+            .shadow(color: .black.opacity(0.5), radius: 14, y: 4)
     }
 
     private func resolve(in canvas: CGRect) -> ([TileSlot], [DividerSlot]) {
@@ -2514,10 +2588,12 @@ private struct LayoutPill: View {
     /// A physical keycap. Three layers do the work: a dark base peeking out
     /// below for thickness, a top-lit gradient face, and a bright rim.
     private var keycap: some View {
-        let assigned = layout.quickKey?.isEmpty == false
-        return Text(keyChipLabel)
+        // A layout with no shortcut says so, rather than showing a key that
+        // does nothing. Having none is the default for a new layout.
+        let assigned = keyChipLabel != nil
+        return Text(keyChipLabel ?? "no key")
             .font(.system(size: 11, weight: .bold, design: .rounded))
-            .foregroundColor(.primary.opacity(assigned ? 1 : 0.7))
+            .foregroundColor(.primary.opacity(assigned ? 1 : 0.45))
             .shadow(color: .black.opacity(0.6), radius: 0, y: 1)
             .padding(.horizontal, 7)
             .frame(minWidth: 26, minHeight: 22)
@@ -2578,11 +2654,13 @@ private struct LayoutPill: View {
         }
     }
 
-    private var keyChipLabel: String {
-        if let quickKey = layout.quickKey, !quickKey.isEmpty {
-            return "⌘\(quickKey.uppercased())"
-        }
-        return index < 9 ? "⌘\(index + 1)" : "⌘–"
+    /// The layout's shortcut, or nothing when it has none.
+    ///
+    /// No positional fallback: a layout without a key genuinely has no
+    /// shortcut, and saying "⌘4" for one would be inventing a keystroke that
+    /// moves whenever the layouts are reordered.
+    private var keyChipLabel: String? {
+        LayoutShortcuts.describe(layout)
     }
 
     private var quickKeyChoices: [String] {

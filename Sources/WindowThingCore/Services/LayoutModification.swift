@@ -1222,3 +1222,50 @@ public extension Layout {
         return copy
     }
 }
+
+// MARK: - Which key applies which layout
+
+public enum LayoutShortcuts {
+    /// Every layout shortcut is Control-Option plus the layout's own key.
+    ///
+    /// One prefix, one meaning, everywhere: the menu bar item, the global
+    /// hotkey, and the label on the layout's chip all describe the same
+    /// keystroke. It used to be Command, which collided with the editor's own
+    /// Command shortcuts — ⌘Z is undo, and the surface saves as you go, so
+    /// undo had to win. The surface then quietly offered a *different* key for
+    /// that layout than the menu did, which is worse than either choice.
+    ///
+    /// Control-Option is what the rest of the app already uses: ⌃⌥W opens the
+    /// surface, ⌃⌥M moves a window, ⌃⌥R reloads the config.
+    public static let modifierDescription = "⌃⌥"
+
+    /// Keys the application has already taken for itself. A layout given one of
+    /// these cannot register, because whoever asked first wins.
+    public static let reserved: Set<String> = ["w", "m", "r", ","]
+
+    /// How a layout's shortcut is written, or nil when it has none.
+    ///
+    /// A layout without a key has no shortcut at all — there is no positional
+    /// fallback. Numbering them by position meant the shortcut moved when
+    /// layouts were reordered, and made "no shortcut" impossible to express.
+    public static func describe(_ layout: Layout) -> String? {
+        guard let key = normalised(layout) else { return nil }
+        return modifierDescription + key.uppercased()
+    }
+
+    /// The layout's key, lowercased, or nil when it has none.
+    public static func normalised(_ layout: Layout) -> String? {
+        guard let key = layout.quickKey?.lowercased(), !key.isEmpty else { return nil }
+        return key
+    }
+
+    /// Layouts whose key the application has already claimed. Registering
+    /// theirs will fail, so it is worth saying so rather than leaving a
+    /// shortcut that silently does nothing.
+    public static func conflicting(in layouts: [Layout]) -> [Layout] {
+        layouts.filter { layout in
+            guard let key = normalised(layout) else { return false }
+            return reserved.contains(key)
+        }
+    }
+}

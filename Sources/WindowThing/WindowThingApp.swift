@@ -61,6 +61,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var cellPickerHotKey: HotKey?
     /// Retained cell hotkeys — releasing deallocates the Carbon shortcut.
     var cellHotKeys: [String: HotKey] = [:]
+    var layoutHotKeys: [UUID: HotKey] = [:]
 
     let windowManager = WindowManager.shared
     let configManager = ConfigManager.shared
@@ -192,8 +193,46 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildStatusMenu(menu)
     }
 
+    /// The window "Move Window to…" will act on.
+    ///
+    /// Captured as the menu is about to open, because opening it is what makes
+    /// WindowThing frontmost — by the time the item is clicked, asking for the
+    /// focused application answers "us". Anything belonging to this app is
+    /// ignored, so the last real answer stands.
+    private var windowForMenuMove: WTWindow?
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        captureWindowForMenuMove()
+        // Layouts can be added, deleted or rekeyed from the surface without
+        // going through the config, so what should be listening may have moved
+        // since the last registration. Cheap, and idempotent.
+        syncLayoutHotKeysIfNeeded()
         rebuildStatusMenu(menu)
+    }
+
+    /// Registered keys, so re-registering only happens when they actually change.
+    private var registeredLayoutKeys: [UUID: String] = [:]
+
+    func syncLayoutHotKeysIfNeeded() {
+        let wanted = layoutManager.layouts.reduce(into: [UUID: String]()) { result, layout in
+            if let key = LayoutShortcuts.normalised(layout) { result[layout.id] = key }
+        }
+        guard wanted != registeredLayoutKeys else { return }
+        registeredLayoutKeys = wanted
+        setupLayoutHotKeys()
+    }
+
+    private func captureWindowForMenuMove() {
+        let manager = WindowManager.shared
+        guard let app = manager.getFocusedApplication(),
+              app.id != ProcessInfo.processInfo.processIdentifier else { return }
+        windowForMenuMove = app.focusedWindow
+            ?? manager.getWindows().first { $0.pid == app.id || $0.bundleId == app.bundleId }
+    }
+
+    @objc private func showCellPickerFromMenu() {
+        guard let window = windowForMenuMove else { return }
+        spaceOverlay.showCellPicker(for: window)
     }
 
     private func updateStatusMenu() {
@@ -222,8 +261,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let item = NSMenuItem(
                     title: layout.name,
                     action: #selector(applyLayout(_:)),
-                    keyEquivalent: layout.quickKey ?? ""
+                    keyEquivalent: LayoutShortcuts.normalised(layout) ?? ""
                 )
+                // Control-Option, matching the global hotkey. Without the mask
+                // AppKit assumes Command and the menu advertises a keystroke
+                // that does something else entirely.
+                item.keyEquivalentModifierMask = [.control, .option]
                 item.representedObject = layout
                 item.target = self
                 item.image = NSImage.layoutIcon(for: layout)
@@ -243,6 +286,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             spaceItem.keyEquivalentModifierMask = shortcut.modifiers
         }
         menu.addItem(spaceItem)
+
+        // The same thing the hotkey does. A shortcut you have to know about is
+        // not a feature anyone finds.
+        let moveItem = NSMenuItem(title: "Move Window to…", action: #selector(showCellPickerFromMenu), keyEquivalent: "")
+        moveItem.target = self
+        if let shortcut = menuShortcut(for: configManager.config.cellPickerHotKey ?? .defaultCellPicker) {
+            moveItem.keyEquivalent = shortcut.equivalent
+            moveItem.keyEquivalentModifierMask = shortcut.modifiers
+        }
+        // Nothing to move to a cell if nothing was in front of us.
+        moveItem.isEnabled = windowForMenuMove != nil
+        menu.addItem(moveItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -372,6 +427,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Re-setup hotkeys with new config
         setupHotKey()
         setupCellHotKeys()
+        setupLayoutHotKeys()
+    }
+
+    // MARK: - Layout Hotkeys
+
+    /// A global shortcut per layout, so a layout's key works wherever you are.
+    ///
+    /// It used to exist only as the menu bar item's key equivalent, which meant
+    /// it worked with the menu open and nowhere else — a shortcut you could
+    /// only use by first navigating to the thing it was a shortcut for.
+    ///
+    /// Re-registered whenever the layouts change: adding one, deleting one or
+    /// changing its key all alter what should be listening.
+    func setupLayoutHotKeys() {
+        layoutHotKeys = [:]
+
+        for layout in layoutManager.layouts {
+            guard let keyString = LayoutShortcuts.normalised(layout) else { continue }
+            guard !LayoutShortcuts.reserved.contains(keyString) else {
+                debugLog("Layout \"\(layout.name)\" asks for \(LayoutShortcuts.modifierDescription)\(keyString.uppercased()), which the app already uses — not registered")
+                continue
+            }
+            guard let key = Key(string: keyString) else { continue }
+
+            let hk = HotKey(key: key, modifiers: [.control, .option])
+            hk.keyDownHandler = { [weak self] in
+                guard let self else { return }
+                if let current = self.layoutManager.layouts.first(where: { $0.id == layout.id }) {
+                    self.layoutManager.applyLayout(current)
+                }
+            }
+            layoutHotKeys[layout.id] = hk
+        }
     }
 
     // MARK: - Cell Hotkeys
@@ -397,9 +485,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        // Register cell-picker hotkey
-        if let pickerConfig = config.cellPickerHotKey,
-           let key = Key(carbonKeyCode: pickerConfig.keyCode) {
+        // Register the move-window hotkey.
+        //
+        // Falls back to the default rather than reading only what the config
+        // says. `AppConfig.default` supplies it, but that is used to *write* a
+        // fresh config — an existing config.yaml predating the setting simply
+        // has no key for it, decodes as nil, and the feature stayed silently
+        // unreachable for exactly the people who had been using the app long
+        // enough to have a config.
+        let pickerConfig = config.cellPickerHotKey ?? .defaultCellPicker
+        if let key = Key(carbonKeyCode: pickerConfig.keyCode) {
             let modifiers = modifierFlags(from: pickerConfig.modifiers)
             cellPickerHotKey = HotKey(key: key, modifiers: modifiers)
             cellPickerHotKey?.keyDownHandler = { [weak self] in

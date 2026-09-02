@@ -315,6 +315,86 @@ struct PrimaryDisplayLayoutTests {
         _ = windowManager.setWindowFrame(pid: testWindow.pid, windowTitle: testWindow.title, frame: originalFrame)
     }
 
+    // MARK: - Moving a window to a cell by its address
+
+    @Test("Moving a window to a cell address puts it in that cell")
+    func moveWindowToCellAddress() throws {
+        // The path behind ⌃⌥M: an address the hints label a region with, turned
+        // into a real frame on a real window. Unit tests cover the arithmetic
+        // with mock displays; this checks the whole chain against the actual
+        // Accessibility API, which is where it has to work.
+        let testWindow = try requireTestWindow()
+        let displays = windowManager.getDisplays()
+        guard let primaryDisplay = displays.first(where: { $0.isMain }) else {
+            throw TestError("No primary display found")
+        }
+
+        let originalFrame = testWindow.frame
+        defer {
+            _ = windowManager.setWindowFrame(
+                pid: testWindow.pid, windowTitle: testWindow.title, frame: originalFrame
+            )
+        }
+
+        // Two side-by-side cells, so address 2 is unambiguously the right half.
+        let layout = Layout(
+            name: "Cell Move Test",
+            screens: ScreenConfig(layouts: [
+                ScreenConfig.primaryKey: .columns([
+                    .stackAll(percentage: 50),
+                    .empty(percentage: 50)
+                ])
+            ])
+        )
+
+        let layoutManager = LayoutManager(windowManager: windowManager)
+        layoutManager.applyLayout(layout)
+        layoutManager.waitForPendingApply()
+
+        // Where the addresses actually are, rather than assuming.
+        let cells = CellIndexer.indexCells(layout: layout, displays: displays)
+        guard let target = cells.first(where: { $0.address == .numeric(2) }) else {
+            throw TestError("No cell 2 in a two-column layout — indexing is wrong")
+        }
+
+        try layoutManager.moveWindow(testWindow, toCellAt: .numeric(2), displays: displays)
+        Thread.sleep(forTimeInterval: 0.5)
+
+        guard let moved = windowManager.getWindows().first(where: { $0.id == testWindow.id }) else {
+            throw TestError("Test window no longer found")
+        }
+
+        // Landed in the right half, within a tolerance: some apps refuse exact
+        // frames, and a test that demands the pixel would fail on those rather
+        // than on anything being wrong.
+        let tolerance = primaryDisplay.frame.width * 0.1
+        #expect(abs(moved.frame.x - target.frame.x) <= tolerance,
+                "expected x near \(target.frame.x), got \(moved.frame.x)")
+        let displayMidX = primaryDisplay.frame.x + primaryDisplay.frame.width / 2
+        #expect(moved.frame.x >= displayMidX - tolerance,
+                "a window moved to cell 2 should sit in the right half")
+    }
+
+    @Test("An address the layout does not have is refused")
+    func moveWindowToMissingAddressThrows() throws {
+        // The hints only offer addresses that exist, but the per-cell hotkeys
+        // in config.yaml are written by hand and can name anything.
+        let testWindow = try requireTestWindow()
+        let displays = windowManager.getDisplays()
+
+        let layout = Layout(
+            name: "Single Cell",
+            screens: ScreenConfig(layouts: [ScreenConfig.primaryKey: .stackAll()])
+        )
+        let layoutManager = LayoutManager(windowManager: windowManager)
+        layoutManager.applyLayout(layout)
+        layoutManager.waitForPendingApply()
+
+        #expect(throws: CellMoveError.self) {
+            try layoutManager.moveWindow(testWindow, toCellAt: .numeric(9), displays: displays)
+        }
+    }
+
     @Test("Save and restore window setup")
     func saveAndRestoreSetup() throws {
         let testWindow = try requireTestWindow()

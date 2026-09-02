@@ -73,12 +73,31 @@ final class SpaceOverlayController {
         windows.forEach { $0.hide() }
     }
 
-    /// Open with the cell picker already up for the frontmost window.
+    /// Open with the cell hints already up for the frontmost window.
     func showCellPickerForFocusedWindow() {
-        if !isVisible { show() }
-        if let window = viewModel.selectedMoveWindow {
-            viewModel.showCellPicker(for: window)
+        // Captured before showing: presenting the surface makes WindowThing
+        // frontmost, so asking afterwards answers "us". `show()` captures it
+        // too, but only when the surface was closed — pressing the shortcut
+        // while it is already open would otherwise reuse a stale target.
+        let manager = WindowManager.shared
+        if let app = manager.getFocusedApplication(),
+           app.id != ProcessInfo.processInfo.processIdentifier,
+           let window = app.focusedWindow
+            ?? manager.getWindows().first(where: { $0.pid == app.id || $0.bundleId == app.bundleId }) {
+            viewModel.selectedMoveWindow = window
         }
+
+        if !isVisible { show() }
+        guard let window = viewModel.selectedMoveWindow else { return }
+        viewModel.showCellPicker(for: window)
+    }
+
+    /// Same, for a window someone else has already picked out — the menu
+    /// captures its own, since opening a menu changes who is frontmost.
+    func showCellPicker(for window: Window) {
+        viewModel.selectedMoveWindow = window
+        if !isVisible { show() }
+        viewModel.showCellPicker(for: window)
     }
 
     // MARK: - Windows

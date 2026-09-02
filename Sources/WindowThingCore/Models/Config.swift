@@ -16,6 +16,17 @@ public struct HotKeyConfig: Codable, Equatable, Sendable {
     public static var `default`: HotKeyConfig {
         HotKeyConfig(keyCode: 13, modifiers: ["control", "option"])  // W = 13
     }
+
+    /// Default for moving the focused window to a cell: Ctrl+Option+M.
+    ///
+    /// Given a default at all because the feature was unreachable without one.
+    /// Everything behind it worked — the addresses, the move, the ghost cells
+    /// for extending the layout — but nothing triggered it unless you had
+    /// written `cellPickerHotKey` into config.yaml yourself, and nothing in the
+    /// app told you that key existed.
+    public static var defaultCellPicker: HotKeyConfig {
+        HotKeyConfig(keyCode: 46, modifiers: ["control", "option"])  // M = 46
+    }
 }
 
 // MARK: - App Configuration
@@ -140,7 +151,8 @@ public struct AppConfig: Codable, Sendable {
             highlightColor: "#4a9eff",
             pollIntervalMs: 500,
             minimumWindowWidth: 200,
-            minimumWindowHeight: 200
+            minimumWindowHeight: 200,
+            cellPickerHotKey: .defaultCellPicker
         )
     }
 }
