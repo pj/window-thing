@@ -58,13 +58,30 @@ VM name and the remote directory rather than hard-coding this project.
 ```
 
 `run-tests.sh` sequence:
-1. Starts the VM headlessly (`tart run --no-graphics`)
-2. rsyncs source to the VM (excludes `.build`, `.git`)
-3. Runs `swift build --build-tests`
-4. Grants Accessibility TCC to `/usr/bin/swift` and the compiled test bundle
-5. (Optionally) starts a virtual second display via `CGVirtualDisplay`
-6. Runs `swift test`
-7. Stops the VM unless `--keep`
+1. Builds and signs `WindowThing.app` and `ax-driver` **on the host**
+2. Starts the VM headlessly (`tart run --no-graphics`)
+3. rsyncs source to the VM (excludes `.build`, `.git`, `build`)
+4. Copies the two built artifacts into the VM's `build/`
+5. Writes the TCC rows it still can (Apple events, user-level)
+6. (Optionally) starts a virtual second display via `CGVirtualDisplay`
+7. Runs the unit suites **on the host**, skipping the window-moving ones
+8. Runs the interface tests in the VM
+9. Stops the VM unless `--keep`
+
+### Nothing is built inside the VM
+
+The image carries no Swift toolchain — no Xcode, no Command Line Tools — so
+everything is compiled on the host and copied in. The VM is a place to run a
+GUI, not a build machine. This is also faster: the guest build used to be the
+slowest part of a run.
+
+Two consequences:
+
+- **`swift test` cannot run in the VM.** The pure suites run on the host
+  instead, with `IntegrationTests` and `PrimaryDisplayLayoutTests` skipped —
+  those move real windows and should not take over a developer's screen.
+- **`--integration-only` is unavailable.** Those suites need both a toolchain
+  and this VM. `xcode-select --install` inside the VM brings them back.
 
 ---
 
@@ -194,11 +211,10 @@ again:
   root, which built the project as root and left hundreds of root-owned files in
   `.build` that no later build could overwrite.
 
-**Toolchain note**: the VM ships Xcode 16.4 (macOS 15 SDK) while a current
-developer machine has Xcode 26. Anything from a newer SDK — `glassEffect()`,
-for instance — must sit behind `#if compiler(>=6.2)` or the VM will fail to
-build the app target. The VM therefore renders the pre-macOS-26 fallback path,
-not Liquid Glass.
+**Toolchain note**: there is no toolchain in the VM at all, so the app it runs
+is built against whatever SDK the host has. The old note here warned that the
+VM's older Xcode would fail on newer SDK symbols; that no longer applies, since
+nothing is compiled there.
 
 ---
 
@@ -206,7 +222,22 @@ not Liquid Glass.
 
 macOS requires explicit permission for any process that reads or moves windows via the Accessibility API.
 
-**Why direct TCC.db writes work here**: Cirruslabs base images ship with SIP disabled, allowing writes to `TCC.db` without a user prompt or MDM profile.
+**Accessibility must be approved by hand on the current image.** Writing
+Accessibility grants directly into the system `TCC.db` needs SIP off; this image
+has SIP on, so the file is read-only even to root and the script cannot grant
+it. `run-tests.sh` checks before running and prints what to switch on rather
+than letting every assertion fail on a timeout.
+
+Approve once, on the VM's screen, under **System Settings > Privacy & Security >
+Accessibility**: `WindowThing` and `ax-driver`. An entry showing `auth_value 0`
+is listed but refused — switch it on rather than adding it again.
+
+It only needs doing once. Both are signed with a Developer ID on the host, so
+they keep one identity across rebuilds; an ad-hoc signature would be a new
+identity every build and the approval would lapse immediately.
+
+The other grants — Apple events, and the user-level rows — are still written by
+`grant-tcc-access.sh`, because those databases are writable.
 
 **Two-phase grant** (automatic):
 1. **Image build time** — `/usr/bin/swift` and Terminal are granted in the image.

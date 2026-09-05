@@ -21,14 +21,15 @@ set -uo pipefail
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 source "$PROJECT_DIR/vm/scripts/ui-lib.sh"
 
-info "Building the app bundle"
-if ! "$PROJECT_DIR/scripts/package.sh" --no-sign >/tmp/ui-test-build.log 2>&1; then
-    echo "build failed; see /tmp/ui-test-build.log"
-    tail -20 /tmp/ui-test-build.log
+# Nothing is built in here: the VM image has no Swift toolchain. The app bundle
+# and the driver are built on the host and copied in by vm/run-tests.sh, so the
+# only question is whether they arrived.
+info "Checking the build arrived from the host"
+if [ ! -d "$APP" ]; then
+    echo "no app bundle at $APP"
+    echo "it is built on the host — run the suite through vm/run-tests.sh."
     exit 1
 fi
-
-info "Building the driver"
 build_driver || exit 1
 
 isolate_config

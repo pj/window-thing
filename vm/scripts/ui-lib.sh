@@ -20,16 +20,16 @@ APP="$PROJECT_DIR/build/WindowThing.app"
 AX="$PROJECT_DIR/build/ax-driver"
 AX_SOURCE="$PROJECT_DIR/vm/scripts/ax-driver.swift"
 
-# Rebuilds only when the source is newer, so repeat runs skip the compile.
+# Built on the host and copied in, so this only checks it arrived.
+#
+# The VM image carries no Swift toolchain, so there is nothing here to compile
+# with. `vm/run-tests.sh` builds this and the app bundle before it syncs.
 build_driver() {
-    if [ -x "$AX" ] && [ "$AX" -nt "$AX_SOURCE" ]; then return 0; fi
-    mkdir -p "$(dirname "$AX")"
-    if ! swiftc -O "$AX_SOURCE" -o "$AX" 2>/tmp/ax-driver-build.log; then
-        echo "could not build the driver:"
-        cat /tmp/ax-driver-build.log
-        return 1
-    fi
-    return 0
+    if [ -x "$AX" ]; then return 0; fi
+    echo "the interface driver is missing at $AX"
+    echo "it is built on the host — run the suite through vm/run-tests.sh,"
+    echo "which builds it and copies it in."
+    return 1
 }
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; DIM='\033[2m'; NC='\033[0m'

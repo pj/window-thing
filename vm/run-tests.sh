@@ -197,6 +197,32 @@ ssh_run_bg() {
     fi
 }
 
+# The built app and the interface driver, which the guest cannot build itself.
+#
+# The VM image carries no Swift toolchain — no Xcode, no Command Line Tools — so
+# everything is compiled here and copied in. That is also why the main project
+# sync excludes `build`: these are the only two things in it the guest needs,
+# and the notarised zip alongside them is a pointless 2MB per run.
+rsync_artifacts_to_vm() {
+    local ip=$1
+    local attempt
+    for attempt in 1 2 3; do
+        if [ "$SSH_MODE" = "key" ]; then
+            rsync -az --delete \
+                --include 'WindowThing.app/***' --include 'ax-driver' --exclude '*' \
+                -e "ssh $SSH_OPTS" \
+                "$PROJECT_DIR/build/" "${SSH_USER}@${ip}:${REMOTE_DIR}/build/" && return 0
+        else
+            sshpass -p "$SSH_PASS" rsync -az --delete \
+                --include 'WindowThing.app/***' --include 'ax-driver' --exclude '*' \
+                -e "ssh $SSH_OPTS" \
+                "$PROJECT_DIR/build/" "${SSH_USER}@${ip}:${REMOTE_DIR}/build/" && return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
 rsync_to_vm() {
     local ip=$1
     local src=$2
@@ -268,13 +294,74 @@ start_virtual_display() {
 # Main test execution                                                           #
 # --------------------------------------------------------------------------- #
 
+# Build what the guest will run, here on the host.
+#
+# The app bundle and the driver are both Swift, and the guest has no compiler.
+# Both are plain arm64 macOS binaries and the VM is the same architecture, so
+# what is built here runs there unchanged.
+#
+# Signed, not ad-hoc. The VM has SIP on, so its Accessibility grants cannot be
+# written from a script and have to be given once by hand — and TCC keys those
+# grants to the code signature. An ad-hoc signature is a fresh identity on every
+# build, so the grant would lapse on the next run and the whole suite would go
+# red until somebody clicked the checkbox again. A Developer ID signature is the
+# same identity every time, so approving once is enough.
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application}"
+
+build_artifacts() {
+    local sign_args=(--no-notarize)
+    if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$CODESIGN_IDENTITY"; then
+        log_warn "No '$CODESIGN_IDENTITY' identity in the keychain — building unsigned."
+        log_warn "The VM's Accessibility grants are keyed to the signature, so they"
+        log_warn "will not survive this build and the interface tests will fail."
+        sign_args=(--no-sign)
+    fi
+
+    log_info "Building the app bundle (host)"
+    if ! "$PROJECT_DIR/scripts/package.sh" "${sign_args[@]}" >/tmp/wt-package.log 2>&1; then
+        log_error "Could not build the app bundle:"
+        tail -20 /tmp/wt-package.log
+        return 1
+    fi
+
+    local driver="$PROJECT_DIR/build/ax-driver"
+    local driver_src="$PROJECT_DIR/vm/scripts/ax-driver.swift"
+    if [ ! -x "$driver" ] || [ "$driver_src" -nt "$driver" ]; then
+        log_info "Building the interface driver (host)"
+        if ! swiftc -O "$driver_src" -o "$driver" 2>/tmp/wt-driver.log; then
+            log_error "Could not build the interface driver:"
+            tail -20 /tmp/wt-driver.log
+            return 1
+        fi
+    fi
+
+    # Signed every run, even when the binary was reused: the driver needs its own
+    # Accessibility grant, and a stable identifier is what that grant is pinned
+    # to. Cheap, and it keeps the driver and the app on the same footing.
+    if [ "${sign_args[0]}" != "--no-sign" ]; then
+        codesign --force --options runtime --timestamp=none \
+            --identifier com.windowthing.ax-driver \
+            --sign "$CODESIGN_IDENTITY" "$driver" >/tmp/wt-driver-sign.log 2>&1 || {
+                log_error "Could not sign the interface driver:"
+                tail -10 /tmp/wt-driver-sign.log
+                return 1
+            }
+    fi
+    return 0
+}
+
 usage() {
     echo "Usage: $0 [options]"
+    echo ""
+    echo "The app and the interface driver are built here on the host and copied"
+    echo "into the VM, which carries no Swift toolchain. The unit suites run on"
+    echo "the host too; only the interface tests run in the VM, because only they"
+    echo "need to take over a screen."
     echo ""
     echo "Options:"
     echo "  --keep              Keep VM running after tests (for debugging)"
     echo "  --filter NAME       Run only tests matching NAME"
-    echo "  --integration-only  Run only PrimaryDisplayLayoutTests"
+    echo "  --integration-only  Unavailable: needs a Swift toolchain in the VM"
     echo "  --dual-display      Spin up a virtual second display before testing"
     echo "  --ui                Also drive the interface (add/rename/delete a layout)"
     echo "  --ui-only           Run only the interface tests"
@@ -290,12 +377,13 @@ run_tests() {
     local skip_tcc=false
     local run_ui=false
     local ui_only=false
+    local integration_only=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --keep)             keep_vm=true;                       shift ;;
             --filter)           test_filter="$2";                   shift 2 ;;
-            --integration-only) test_filter="PrimaryDisplayLayoutTests"; shift ;;
+            --integration-only) integration_only=true;              shift ;;
             --dual-display)     dual_display=true;                  shift ;;
             --ui)               run_ui=true;                        shift ;;
             --ui-only)          run_ui=true; ui_only=true;          shift ;;
@@ -310,9 +398,22 @@ run_tests() {
         esac
     done
 
+    if [ "$integration_only" = true ]; then
+        log_error "The window-moving suites need a Swift toolchain inside the VM, and this image has none."
+        log_info  "They are the one thing that cannot move to the host: they move real windows."
+        log_info  "Install the Command Line Tools in the VM to bring them back:"
+        log_info  "  xcode-select --install   (in the VM), then re-run with --filter PrimaryDisplayLayoutTests"
+        exit 1
+    fi
+
     check_tart
     check_vm
     check_sshpass
+
+    # Before the VM is touched: a compile error should not cost a boot.
+    if ! build_artifacts; then
+        exit 1
+    fi
 
     if [ "$keep_vm" = false ]; then
         trap cleanup EXIT
@@ -352,31 +453,15 @@ run_tests() {
     rsync_to_vm "$ip" "$PROJECT_DIR/" "$REMOTE_DIR/"
 
     # ------------------------------------------------------------------ #
-    # Build                                                                 #
+    # Ship the build                                                        #
     # ------------------------------------------------------------------ #
-    # The interface tests do not touch the xctest bundle at all: they drive the
-    # packaged app through Accessibility, and `ui-test.sh` builds that itself.
-    # Building the test bundle for them — ViewInspector, all three test targets
-    # — was most of the wall time of a --ui-only run, for nothing.
-    if [ "$ui_only" = true ]; then
-        log_info "Skipping the test-bundle build (--ui-only doesn't use it)"
-    else
-        # Cleaning first is a last resort, not a routine.
-        #
-        # This used to `swift package clean` on every run, which meant every run
-        # was a cold build — the guard against a corrupted build.db from an
-        # interrupted run was being paid in full every time, whether or not
-        # anything was wrong. Build first; only if that fails is it worth
-        # suspecting the build directory, and then we clean and try once more.
-        log_info "Building project in VM..."
-        if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
-            log_warn "Build failed — clearing the build directory and retrying once"
-            ssh_run "$ip" "cd $REMOTE_DIR && swift package clean 2>/dev/null || rm -rf .build/build.db" || true
-            if ! ssh_run "$ip" "cd $REMOTE_DIR && swift build --build-tests 2>&1"; then
-                log_error "Build failed"
-                exit 1
-            fi
-        fi
+    # Built on the host and copied in, because the VM image has no Swift
+    # toolchain. This is also faster than the old arrangement: the guest build
+    # was the slowest part of a run, and the host is a much quicker machine.
+    log_info "Copying the app and driver into the VM..."
+    if ! rsync_artifacts_to_vm "$ip"; then
+        log_error "Could not copy the build artifacts to the VM"
+        exit 1
     fi
 
     # ------------------------------------------------------------------ #
@@ -426,23 +511,30 @@ run_tests() {
     # ------------------------------------------------------------------ #
     # Run tests                                                             #
     # ------------------------------------------------------------------ #
-    log_info "Running tests..."
-    # --no-parallel prevents Swift Testing from running test suites concurrently
-    # across targets. Without this, global singletons (WindowManager, LayoutManager)
-    # get accessed from multiple threads simultaneously, causing intermittent SIGSEGVs.
-    local test_cmd="cd $REMOTE_DIR && swift test --no-parallel"
-    if [ -n "$test_filter" ]; then
-        test_cmd="$test_cmd --filter '$test_filter'"
-    fi
-
+    # The unit suites run on the host, not in here.
+    #
+    # `swift test` needs a toolchain and the VM has none. The suites that must
+    # not run on a developer's own machine are the ones that move real windows;
+    # everything else is pure logic and is just as valid run locally, so it is
+    # run here with those two skipped. The window-moving suites need both a
+    # toolchain and this VM, so they cannot run at all until the image has one —
+    # `--integration-only` says so rather than pretending to.
     local exit_code=0
     if [ "$ui_only" = true ]; then
-        log_info "Skipping the unit suite (--ui-only)"
-    elif ssh_run "$ip" "$test_cmd 2>&1"; then
-        log_info "All tests passed."
+        log_info "Skipping the unit suites (--ui-only)"
     else
-        log_error "Some tests failed."
-        exit_code=1
+        log_info "Running the unit suites on the host..."
+        local host_test_cmd=(swift test --no-parallel
+                             --skip IntegrationTests --skip PrimaryDisplayLayoutTests)
+        if [ -n "$test_filter" ]; then
+            host_test_cmd+=(--filter "$test_filter")
+        fi
+        if (cd "$PROJECT_DIR" && "${host_test_cmd[@]}" 2>&1); then
+            log_info "All tests passed."
+        else
+            log_error "Some tests failed."
+            exit_code=1
+        fi
     fi
 
     # ------------------------------------------------------------------ #
@@ -451,6 +543,34 @@ run_tests() {
     # here rather than on whoever's machine is driving the VM.             #
     # ------------------------------------------------------------------ #
     if [ "$run_ui" = true ]; then
+        # Checked before running, not discovered through the failures.
+        #
+        # Without Accessibility the app cannot place a window and the driver
+        # cannot read one, so every assertion fails on a timeout and the report
+        # looks like nine broken features rather than one missing checkbox.
+        local ax_app ax_driver
+        ax_app=$(ssh_run "$ip" "sudo sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' \
+            \"select auth_value from access where service='kTCCServiceAccessibility' and client='com.windowthing.app';\" 2>/dev/null" | tr -d '\r\n')
+        ax_driver=$(ssh_run "$ip" "sudo sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' \
+            \"select auth_value from access where service='kTCCServiceAccessibility' and client like '%ax-driver%';\" 2>/dev/null" | tr -d '\r\n')
+
+        if [ "$ax_app" != "2" ] || [ "$ax_driver" != "2" ]; then
+            log_error "The VM has not approved Accessibility, so the interface tests cannot run."
+            log_info  "  WindowThing: ${ax_app:-not listed}    ax-driver: ${ax_driver:-not listed}   (2 = approved)"
+            log_info  ""
+            log_info  "SIP is on in this image, so this cannot be granted from a script."
+            log_info  "On the VM's screen, open:"
+            log_info  "  System Settings > Privacy & Security > Accessibility"
+            log_info  "and switch on WindowThing and ax-driver, adding them with '+' if absent."
+            log_info  "Paths are written out in full because the file picker will not take a ~:"
+            log_info  "  ${REMOTE_DIR/#\~//Users/$SSH_USER}/build/WindowThing.app"
+            log_info  "  ${REMOTE_DIR/#\~//Users/$SSH_USER}/build/ax-driver"
+            log_info  "  (Shift-Cmd-G in the picker takes a typed path)"
+            log_info  ""
+            log_info  "Once only — both are Developer ID signed, so it survives rebuilds."
+            return 1
+        fi
+
         # The project sync excludes vm/ — the guest has no use for the harness,
         # and vm/screenshots would be pointless traffic. The interface test does
         # live in there, though, so send that directory across on its own.

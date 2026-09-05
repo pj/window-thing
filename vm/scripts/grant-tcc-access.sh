@@ -73,15 +73,22 @@ else
     echo "  [warn] User TCC.db not found — skipping user-level grants"
 fi
 
-# System-level TCC (needs sudo — fails gracefully if not available)
-echo "System TCC.db (requires sudo):"
-if [ -w "$TCC_DB_SYSTEM" ] || sudo -n true 2>/dev/null; then
-    sudo sqlite3 "$TCC_DB_SYSTEM" \
+# System-level TCC — Accessibility lives here, and only here.
+#
+# Writable only with SIP off. With SIP on the file is read-only even to root,
+# and the failure is worth reporting loudly rather than skipping past: every
+# interface assertion depends on this, so a silent skip turns one missing
+# permission into a wall of unrelated-looking failures ("the surface did not
+# open within 25s") that reads like the app is broken.
+echo "System TCC.db (Accessibility):"
+if sudo sqlite3 "$TCC_DB_SYSTEM" \
         "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,policy_id,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,flags,last_modified) \
-         VALUES('$SERVICE','/usr/bin/swift',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$TIMESTAMP);" \
-        2>/dev/null && echo "  [ok] /usr/bin/swift (system)" || echo "  [skip] could not write system TCC.db"
+         VALUES('$SERVICE','/usr/bin/swift',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$TIMESTAMP);" 2>/dev/null; then
+    echo "  [ok] /usr/bin/swift (system)"
+    SYSTEM_TCC_WRITABLE=true
 else
-    echo "  [skip] sudo not available without password"
+    SYSTEM_TCC_WRITABLE=false
+    echo "  [read-only] SIP is on, so Accessibility cannot be granted from a script."
 fi
 
 # Pre-grant expected test binary paths.
@@ -126,5 +133,38 @@ while IFS= read -r -d '' TEST_BUNDLE; do
             2>/dev/null && echo "  [ok] $TEST_BIN" || true
     fi
 done < <(find "$PROJECT_DIR/.build" -name "*.xctest" -path "*/debug/*" -print0 2>/dev/null)
+
+# What is actually granted, and what to do when it isn't.
+#
+# The check is on the app rather than the driver because System Settings will
+# only list a bundle; whoever approves the app will be in the right pane to
+# approve the driver alongside it.
+if [ "$SYSTEM_TCC_WRITABLE" != "true" ]; then
+    APP_STATE=$(sudo sqlite3 "$TCC_DB_SYSTEM" \
+        "select auth_value from access where service='$SERVICE' and client='com.windowthing.app';" 2>/dev/null)
+    DRIVER_STATE=$(sudo sqlite3 "$TCC_DB_SYSTEM" \
+        "select auth_value from access where service='$SERVICE' and client like '%ax-driver%';" 2>/dev/null)
+
+    if [ "$APP_STATE" = "2" ] && [ "$DRIVER_STATE" = "2" ]; then
+        echo "Accessibility: already approved for the app and the driver."
+    else
+        echo ""
+        echo "  Accessibility is not approved in this VM, and with SIP on it cannot"
+        echo "  be granted from here. Approve it once, in the VM's own screen:"
+        echo ""
+        echo "    System Settings > Privacy & Security > Accessibility"
+        echo "      WindowThing        (currently: ${APP_STATE:-not listed})"
+        echo "      ax-driver          (currently: ${DRIVER_STATE:-not listed})"
+        echo ""
+        echo "  auth_value 0 means listed but refused — switch it on rather than"
+        echo "  adding it again. Add missing entries with '+' from:"
+        echo "    $PROJECT_DIR/build/WindowThing.app"
+        echo "    $PROJECT_DIR/build/ax-driver"
+        echo ""
+        echo "  It only needs doing once: both are signed with a Developer ID, so"
+        echo "  the approval carries across rebuilds."
+        echo ""
+    fi
+fi
 
 echo "=== TCC grant complete ==="
