@@ -95,6 +95,9 @@ public class WindowManager: WindowManaging {
         return windowCache.first { $0.id == id }
     }
 
+    /// Last main display name reported, so the log fires on change only.
+    private static var lastLoggedMainDisplay: String?
+
     private init() {}
 
     // MARK: - Display Management
@@ -128,7 +131,19 @@ public class WindowManager: WindowManaging {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
 
         for (index, screen) in NSScreen.screens.enumerated() {
-            let isMain = screen == NSScreen.main
+            // The first screen, not `NSScreen.main`. Despite the name,
+            // `NSScreen.main` is the screen holding the window with keyboard
+            // focus, so it moves to whichever display you last clicked on.
+            // $PRIMARY resolves through this flag, so the stack was being
+            // rebuilt on the focused display and dragged back again on the next
+            // click — measured switching to S27D360 and back purely on focus,
+            // while `screens.first` stayed put throughout.
+            //
+            // `screens.first` is the display with the menu bar, at the Cocoa
+            // origin, which is the same one `primaryHeight` above is taken
+            // from: the two have to agree or the coordinate flip is computed
+            // against a different screen than the layout is placed on.
+            let isMain = index == 0
 
             // Get display name from localized name
             let name = screen.localizedName
@@ -157,6 +172,16 @@ public class WindowManager: WindowManaging {
         displayCache = displays
         cacheLock.unlock()
         DisplayRegistry.shared.record(displays: displays)
+
+        // Logged only when it changes. Which display is "main" decides where
+        // $PRIMARY — and so the stack — is placed, so a main that moves drags
+        // every stacked window with it.
+        let mainName = displays.first(where: { $0.isMain })?.name ?? "none"
+        if mainName != Self.lastLoggedMainDisplay {
+            Self.lastLoggedMainDisplay = mainName
+            Self.perfLog.info("main display is now \(mainName, privacy: .public)")
+        }
+
         return displays
     }
 

@@ -102,3 +102,42 @@ struct VisibleFrameTests {
         #expect(!achievable.needsMove(to: target))
     }
 }
+/// `$PRIMARY` resolves to whichever display carries `isMain`, so what that flag
+/// means decides where the stack lands.
+@Suite("Which display is main")
+struct MainDisplayTests {
+
+    @Test("Exactly one display is main, and it is the first")
+    func mainIsTheFirstScreen() {
+        // NOT a regression test for the bug this suite was written after, and
+        // it must not be mistaken for one. `isMain` was built from
+        // `NSScreen.main` — the screen holding the window with keyboard focus,
+        // not the primary display — so $PRIMARY moved to whichever monitor was
+        // clicked and the stack was rebuilt there, then dragged back.
+        //
+        // This cannot catch that. `NSScreen.main` only diverges inside an
+        // application with real keyboard focus; from a windowless test process
+        // it returns the primary whatever else is frontmost. Checked, with the
+        // old line put back and focus on the secondary display: this test still
+        // passed. The bug was confirmed instead by sampling `NSScreen.main`
+        // from a running GUI process while clicking each display in turn.
+        //
+        // What it does hold down is the invariant the placement code reads:
+        // one main display, and it is the one at the Cocoa origin.
+        let displays = WindowManager.shared.getDisplays()
+        guard displays.count > 1 else { return }
+
+        #expect(displays.filter(\.isMain).count == 1, "exactly one display is main")
+        #expect(displays.first?.isMain == true, "the first screen is the main one")
+    }
+
+    @Test("Every display gets a distinct identity")
+    func displaysAreDistinct() {
+        // A layout keys secondary displays by name, so two displays sharing one
+        // would make a layout ambiguous about where its panes go.
+        let displays = WindowManager.shared.getDisplays()
+        guard displays.count > 1 else { return }
+
+        #expect(Set(displays.map(\.id)).count == displays.count)
+    }
+}
