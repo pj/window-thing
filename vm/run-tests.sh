@@ -548,26 +548,28 @@ run_tests() {
         # Without Accessibility the app cannot place a window and the driver
         # cannot read one, so every assertion fails on a timeout and the report
         # looks like nine broken features rather than one missing checkbox.
-        local ax_app ax_driver
-        ax_app=$(ssh_run "$ip" "sudo sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' \
-            \"select auth_value from access where service='kTCCServiceAccessibility' and client='com.windowthing.app';\" 2>/dev/null" | tr -d '\r\n')
-        ax_driver=$(ssh_run "$ip" "sudo sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' \
-            \"select auth_value from access where service='kTCCServiceAccessibility' and client like '%ax-driver%';\" 2>/dev/null" | tr -d '\r\n')
+        rsync_to_vm "$ip" "$PROJECT_DIR/vm/scripts/check-accessibility.sh" "/tmp/check-accessibility.sh" || true
+        local ax_report
+        ax_report=$(ssh_run "$ip" "bash /tmp/check-accessibility.sh $REMOTE_DIR 2>/dev/null" | tr -d '\r')
 
-        if [ "$ax_app" != "2" ] || [ "$ax_driver" != "2" ]; then
-            log_error "The VM has not approved Accessibility, so the interface tests cannot run."
-            log_info  "  WindowThing: ${ax_app:-not listed}    ax-driver: ${ax_driver:-not listed}   (2 = approved)"
+        if echo "$ax_report" | grep -qv ' ok$'; then
+            local full_path="${REMOTE_DIR/#\~//Users/$SSH_USER}"
+            log_error "Accessibility is not usable in the VM, so the interface tests cannot run."
+            echo "$ax_report" | while read -r line; do log_info "  $line"; done
             log_info  ""
             log_info  "SIP is on in this image, so this cannot be granted from a script."
-            log_info  "On the VM's screen, open:"
-            log_info  "  System Settings > Privacy & Security > Accessibility"
-            log_info  "and switch on WindowThing and ax-driver, adding them with '+' if absent."
-            log_info  "Paths are written out in full because the file picker will not take a ~:"
-            log_info  "  ${REMOTE_DIR/#\~//Users/$SSH_USER}/build/WindowThing.app"
-            log_info  "  ${REMOTE_DIR/#\~//Users/$SSH_USER}/build/ax-driver"
-            log_info  "  (Shift-Cmd-G in the picker takes a typed path)"
+            log_info  "On the VM's screen: System Settings > Privacy & Security > Accessibility"
             log_info  ""
-            log_info  "Once only — both are Developer ID signed, so it survives rebuilds."
+            log_info  "  missing  — add it with '+' (Shift-Cmd-G takes a typed path)"
+            log_info  "  denied   — listed but switched off; switch it on"
+            log_info  "  stale    — approved, but pinned to a build that no longer exists."
+            log_info  "             Remove the entry with '-' and add it again; toggling"
+            log_info  "             the checkbox does not rewrite what it is pinned to."
+            log_info  ""
+            log_info  "  $full_path/build/WindowThing.app"
+            log_info  "  $full_path/build/ax-driver"
+            log_info  ""
+            log_info  "Once only — both are Developer ID signed, so a fresh entry survives rebuilds."
             return 1
         fi
 
