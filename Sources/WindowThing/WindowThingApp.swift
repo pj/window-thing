@@ -159,6 +159,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             NSApp.activate(ignoringOtherApps: true)
 
+            // What the scene actually produced. Worth a line: when this comes
+            // up empty every interface assertion fails on a timeout, and there
+            // is otherwise nothing to say whether the scene was never asked
+            // for, produced no window, or produced one nothing can see.
+            debugLog("Screenshot scene '\(scene)': \(NSScreen.screens.count) screen(s), "
+                + "\(self.spaceOverlay.windows.count) overlay window(s), "
+                + "visible=\(self.spaceOverlay.isVisible), "
+                + "app windows=\(NSApp.windows.count)")
+
             // Layout reconciliation can push our own window behind the windows
             // it just arranged; float it back to the front for the capture.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {

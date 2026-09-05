@@ -47,3 +47,13 @@ verdict_for() {
 
 verdict_for WindowThing com.windowthing.app "$PROJECT_DIR/build/WindowThing.app"
 verdict_for ax-driver "$PROJECT_DIR/build/ax-driver" "$PROJECT_DIR/build/ax-driver"
+
+# The process TCC actually blames for the driver.
+#
+# Consent is recorded against the *responsible* process, not the one that calls
+# the API. The app escapes this because `open` hands it to launchd, which makes
+# it its own responsible process; the driver is exec'd straight from the ssh
+# session, so the decision is taken against sshd-keygen-wrapper instead. Its own
+# row can sit at denied while the driver's says approved, and then every query
+# the driver makes comes back empty with nothing to say why.
+verdict_for ssh-responsible-process /usr/libexec/sshd-keygen-wrapper /usr/libexec/sshd-keygen-wrapper

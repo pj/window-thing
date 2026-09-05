@@ -102,6 +102,22 @@ guard let command = arguments.first else {
 }
 
 switch command {
+case "trust":
+    // Separates "not permitted" from "nothing to see". Both make every other
+    // command return nothing, and they need completely different fixes.
+    print("AXIsProcessTrusted: \(AXIsProcessTrusted())")
+    var windowsRef: CFTypeRef?
+    let windowsErr = AXUIElementCopyAttributeValue(
+        appElement, kAXWindowsAttribute as CFString, &windowsRef)
+    print("kAXWindows: err=\(windowsErr.rawValue) count=\((windowsRef as? [AXUIElement])?.count ?? -1)")
+    var kidsRef: CFTypeRef?
+    let kidsErr = AXUIElementCopyAttributeValue(
+        appElement, kAXChildrenAttribute as CFString, &kidsRef)
+    print("kAXChildren: err=\(kidsErr.rawValue) count=\((kidsRef as? [AXUIElement])?.count ?? -1)")
+    for child in (kidsRef as? [AXUIElement]) ?? [] {
+        print("  child role=\(string(child, kAXRoleAttribute) ?? "?") title=\(string(child, kAXTitleAttribute) ?? "")")
+    }
+
 case "list":
     let all = controls()
     print("controls: \(all.count)")

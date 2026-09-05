@@ -568,8 +568,15 @@ run_tests() {
             log_info  ""
             log_info  "  $full_path/build/WindowThing.app"
             log_info  "  $full_path/build/ax-driver"
+            log_info  "  /usr/libexec/sshd-keygen-wrapper"
             log_info  ""
-            log_info  "Once only — both are Developer ID signed, so a fresh entry survives rebuilds."
+            log_info  "That last one is not a mistake. TCC records consent against the process"
+            log_info  "it holds responsible, and a driver run over ssh is charged to sshd rather"
+            log_info  "than to itself — so the driver's own entry can read approved while every"
+            log_info  "query it makes comes back empty. The app avoids this only because 'open'"
+            log_info  "hands it to launchd, which makes it its own responsible process."
+            log_info  ""
+            log_info  "Once only — the app and driver are Developer ID signed, so entries survive rebuilds."
             return 1
         fi
 
