@@ -314,6 +314,18 @@ BACKUP="$CONFIG_DIR/config.yaml.uitest-backup"
 
 isolate_config() {
     mkdir -p "$CONFIG_DIR"
+
+    # A backup already sitting here means the previous run died before its trap
+    # restored one. The config on disk is therefore whatever that run left
+    # behind — scratch layouts and all — and copying it over the backup would
+    # promote the wreckage to the new baseline. Every later run then starts from
+    # it, and the suite fails on layout counts for reasons that have nothing to
+    # do with the code. Recovering first is what stops that being permanent.
+    if [ -f "$BACKUP" ]; then
+        note "a backup from an unfinished run was found; restoring it first"
+        mv "$BACKUP" "$CONFIG_DIR/config.yaml"
+    fi
+
     [ -f "$CONFIG_DIR/config.yaml" ] && cp "$CONFIG_DIR/config.yaml" "$BACKUP"
     return 0
 }
