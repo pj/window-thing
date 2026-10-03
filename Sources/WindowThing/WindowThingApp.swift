@@ -199,6 +199,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.updateStatusIcon()
         }
 
+        // Only worth a line when it did not finish. A pass that is cut short
+        // leaves the screen half-arranged, which is indistinguishable on sight
+        // from windows that refused to move.
+        layoutManager.onApplyFinished = { moved, wanted, cancelled in
+            guard cancelled else { return }
+            debugLog("Layout apply cut short: \(moved)/\(wanted) windows moved")
+        }
+
         // Rebuilt every time it opens rather than assembled once at launch.
         // Layouts are added, renamed and deleted from the layout surface, and a
         // menu built ahead of all that lists layouts that no longer exist while

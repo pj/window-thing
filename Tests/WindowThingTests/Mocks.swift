@@ -41,7 +41,13 @@ public class MockWindowManager: WindowManaging {
         return setWindowFrameReturnValue
     }
 
+    /// Pause inside each frame write, so a test can hold a pass open long enough
+    /// for something else to try to interrupt it. Real writes are several
+    /// Accessibility round trips and take far longer than anything here.
+    public var frameWriteDelay: TimeInterval = 0
+
     public func setWindowFrame(pid: pid_t, windowId: CGWindowID, frame: WindowFrame) -> Bool {
+        if frameWriteDelay > 0 { Thread.sleep(forTimeInterval: frameWriteDelay) }
         record((pid: pid, windowTitle: nil, frame: frame))
         return setWindowFrameReturnValue
     }

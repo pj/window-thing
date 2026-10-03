@@ -668,6 +668,35 @@ public class LayoutManager: LayoutManaging {
     let applyQueue = DispatchQueue(label: "com.windowthing.layout-apply", qos: .userInitiated)
     private var currentApplyWorkItem: DispatchWorkItem?
 
+    /// How many passes of frame writes are queued or running.
+    ///
+    /// Counted rather than flagged, and decremented on `applyQueue` where the
+    /// work actually ends rather than through a hop back to the main queue: a
+    /// pass that has finished must read as finished immediately, or the next
+    /// reconcile stands down for a pass that is already over and the layout
+    /// stops being maintained for as long as the main thread is busy.
+    private let applyStateLock = NSLock()
+    private var passesInFlight = 0
+
+    private var applyInFlight: Bool {
+        applyStateLock.lock()
+        defer { applyStateLock.unlock() }
+        return passesInFlight > 0
+    }
+
+    /// Reports how a pass of frame writes ended: how many of the windows it set
+    /// out to move it actually moved, and whether it was cut short.
+    ///
+    /// Exists because a pass that is cancelled halfway leaves the screen
+    /// half-arranged, which looks exactly like windows that refused to move —
+    /// and the two have nothing in common.
+    ///
+    /// Delivered on `applyQueue`, synchronously, as the pass ends. Not hopped
+    /// to the main queue: the handler is a logger, and routing it through main
+    /// made the report depend on something else draining that queue — which a
+    /// test process does not do, so the reports simply never arrived.
+    public var onApplyFinished: ((_ moved: Int, _ wanted: Int, _ cancelled: Bool) -> Void)?
+
     /// What each window can actually achieve. Only ever touched from
     /// `applyQueue`, inside the work item below.
     private let settleTracker = WindowSettleTracker()
@@ -675,6 +704,17 @@ public class LayoutManager: LayoutManaging {
     /// Block until any pending layout application completes. For testing only.
     public func waitForPendingApply() {
         applyQueue.sync {}
+
+        // Draining the queue is not the same as the pass being over. The count
+        // is decremented from `notify`, which is submitted when the item ends —
+        // possibly after the barrier above had already been enqueued. Waiting
+        // on the count makes "pending" mean pending; without it a test can
+        // schedule the next pass while the previous one still reads as running,
+        // and sees it skipped.
+        let deadline = Date().addingTimeInterval(5)
+        while applyInFlight, Date() < deadline {
+            usleep(500)
+        }
     }
 
     public init(windowManager: WindowManaging, userDefaults: UserDefaults = .standard) {
@@ -789,14 +829,31 @@ public class LayoutManager: LayoutManaging {
     ///   for an explicit apply, which should assert the layout even over a
     ///   window that merely looks correct.
     private func applyPlacements(_ placements: [WindowPlacement], skippingUnchanged: Bool) {
+        // Who gets to interrupt whom.
+        //
+        // Writing a frame is several Accessibility round trips into another
+        // process, so arranging a few dozen windows takes well over a second —
+        // comfortably longer than the half-second reconcile tick. Cancelling
+        // whatever was running meant the tick routinely cut down an apply the
+        // user had just asked for: measured at 10 of 27 windows moved, which on
+        // screen is a layout that visibly stops halfway.
+        //
+        // So a reconcile never interrupts anything. It is a background tidy-up
+        // and the next tick will do just as well; whatever is in flight knows
+        // more about what the user wants than this tick does. An explicit apply
+        // still interrupts, because that is the user changing their mind and
+        // the newer instruction is the one to honour.
+        if skippingUnchanged, applyInFlight { return }
+
         currentApplyWorkItem?.cancel()
 
         let wm = windowManager
         let tracker = settleTracker
         var item: DispatchWorkItem!
-        item = DispatchWorkItem {
+        item = DispatchWorkItem { [weak self] in
             let t0 = CFAbsoluteTimeGetCurrent()
             var moved = 0
+
 
             wm.beginFrameBatch()
             defer {
@@ -845,19 +902,39 @@ public class LayoutManager: LayoutManaging {
             // thread-safe for that.
             let byProcess = Dictionary(grouping: toMove, by: { $0.window.pid })
 
+            var written = 0
             for (_, group) in byProcess {
-                guard !item.isCancelled else { return }
+                if item.isCancelled { break }
                 for placement in group {
-                    guard !item.isCancelled else { return }
+                    if item.isCancelled { break }
                     _ = wm.setWindowFrame(
                         pid: placement.window.pid,
                         windowId: placement.window.id,
                         frame: placement.targetFrame
                     )
+                    written += 1
                 }
             }
+
+            self?.onApplyFinished?(written, toMove.count, item.isCancelled)
         }
         currentApplyWorkItem = item
+        applyStateLock.lock()
+        passesInFlight += 1
+        applyStateLock.unlock()
+
+        // Counted down from `notify` rather than from inside the work item.
+        // A work item cancelled before the queue reaches it never runs its body
+        // at all, so a decrement in there is simply skipped — and the count
+        // then only ever rises, until every reconcile is standing down for
+        // passes that finished long ago and the layout stops being maintained.
+        // `notify` runs either way.
+        item.notify(queue: applyQueue) { [weak self] in
+            guard let self else { return }
+            self.applyStateLock.lock()
+            self.passesInFlight -= 1
+            self.applyStateLock.unlock()
+        }
         applyQueue.async(execute: item)
     }
 
