@@ -67,6 +67,30 @@ struct ManageableWindowTests {
             foundInAXList: false, axListReadable: true))
     }
 
+    // MARK: - What is worth remembering
+
+    @Test("A verdict from the window's own subrole is remembered")
+    func subroleVerdictsAreCached() {
+        // A subrole is a property of the window and does not change, so asking
+        // once is right — that is what the cache is for.
+        #expect(WindowManager.isVerdictWorthRemembering(foundInAXList: true))
+    }
+
+    @Test("A window missing from the list is judged again next time")
+    func absenceIsNotRemembered() {
+        // Absence is not a property of the window. An app that is launching,
+        // busy, or reconfiguring after a display change can answer with a list
+        // that omits a window it owns, and Finder answers kAXWindows with an
+        // empty array routinely.
+        //
+        // Remembering that made a momentary gap permanent: the window was taken
+        // for a popover and left out of every layout for as long as it stayed
+        // open. Reported as layouts not applying at all, with a restart as the
+        // only cure — and a restart "fixing" it is the shape of cached state,
+        // not of a broken layout.
+        #expect(!WindowManager.isVerdictWorthRemembering(foundInAXList: false))
+    }
+
     // MARK: - Failing open
 
     @Test("An app that can't be asked keeps all of its windows")

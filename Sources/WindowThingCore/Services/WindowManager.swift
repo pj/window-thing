@@ -510,6 +510,23 @@ public class WindowManager: WindowManaging {
     ///   - subrole: the window's Accessibility subrole, nil if it has none.
     ///   - foundInAXList: whether the app listed this window at all.
     ///   - axListReadable: whether the app's window list could be read.
+    /// Whether a manageability verdict should be remembered for this window.
+    ///
+    /// Only verdicts reached from something the window said about itself. A
+    /// subrole is a property of the window and never changes, so it is safe to
+    /// ask once. "It was not in the app's list" is not a property of the window
+    /// at all: an app that is launching, busy, or reconfiguring after a display
+    /// change can answer with a list that omits a window it owns, and Finder
+    /// answers `kAXWindows` with an empty array as a matter of routine.
+    ///
+    /// Remembering that turned a momentary gap into a permanent exclusion — the
+    /// window was judged a popover and dropped from every layout for as long as
+    /// it stayed open, with a restart as the only cure. Re-asking costs a walk
+    /// of a list the pass has already fetched for that process.
+    public static func isVerdictWorthRemembering(foundInAXList: Bool) -> Bool {
+        foundInAXList
+    }
+
     public static func isManageable(
         subrole: String?, foundInAXList: Bool, axListReadable: Bool
     ) -> Bool {
@@ -553,9 +570,11 @@ public class WindowManager: WindowManaging {
         let result = Self.isManageable(
             subrole: subrole, foundInAXList: found, axListReadable: true)
 
-        cacheLock.lock()
-        manageableCache[windowId] = result
-        cacheLock.unlock()
+        if Self.isVerdictWorthRemembering(foundInAXList: found) {
+            cacheLock.lock()
+            manageableCache[windowId] = result
+            cacheLock.unlock()
+        }
         return result
     }
 

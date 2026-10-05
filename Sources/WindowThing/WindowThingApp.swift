@@ -203,8 +203,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // leaves the screen half-arranged, which is indistinguishable on sight
         // from windows that refused to move.
         layoutManager.onApplyFinished = { moved, wanted, cancelled in
-            guard cancelled else { return }
-            debugLog("Layout apply cut short: \(moved)/\(wanted) windows moved")
+            debugLog("Layout apply: \(moved)/\(wanted) windows moved\(cancelled ? " (cut short)" : "")")
         }
 
         // Rebuilt every time it opens rather than assembled once at launch.
