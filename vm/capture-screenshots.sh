@@ -93,6 +93,12 @@ for tool in tart sshpass rsync; do
     command -v "$tool" &>/dev/null || { log_error "$tool is not installed"; exit 1; }
 done
 
+# Sets and exports TART_HOME: the VMs live on an external disk, not the boot
+# drive, and tart reports "no such VM" rather than "no disk" without this.
+# shellcheck source=scripts/vm-store.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/vm-store.sh"
+require_vm_store || exit 1
+
 tart list | grep -q "${VM_NAME}" || {
     log_error "VM '${VM_NAME}' not found. Build it with: cd vm/packer && packer build macos-dev.pkr.hcl"
     exit 1

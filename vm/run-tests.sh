@@ -11,6 +11,10 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # Named after this project, so a shared VM can hold several side by side.
 REMOTE_DIR="~/Projects/$(basename "$PROJECT_DIR")"
 
+# Sets and exports TART_HOME, and knows how to say the disk is missing.
+# shellcheck source=scripts/vm-store.sh
+source "$PROJECT_DIR/vm/scripts/vm-store.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -33,9 +37,19 @@ check_tart() {
 }
 
 check_vm() {
+    # Before asking tart anything: with the disk detached it answers "no such
+    # VM", which reads as a missing VM rather than a missing disk.
+    require_vm_store || exit 1
+
     if ! tart list | grep -q "^local.*${VM_NAME}"; then
-        log_error "VM '${VM_NAME}' not found."
-        log_info  "Build it first with: cd vm/packer && packer build macos-dev.pkr.hcl"
+        log_error "VM '${VM_NAME}' not found in $TART_HOME/vms."
+        if [ -d "$TART_HOME/vms/$VM_GOLDEN" ]; then
+            log_info "The pristine copy is there, so restore from it:"
+            log_info "  /bin/cp -c -R '$TART_HOME/vms/$VM_GOLDEN' '$TART_HOME/vms/${VM_NAME}'"
+            log_info "An APFS clone: a second, and no extra space."
+        else
+            log_info "Build it first with: cd vm/packer && packer build macos-dev.pkr.hcl"
+        fi
         exit 1
     fi
 }

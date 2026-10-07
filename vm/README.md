@@ -85,6 +85,46 @@ Two consequences:
 
 ---
 
+## Where the VMs live
+
+Not on the boot drive. Each VM is tens of gigabytes, so `TART_HOME` points at an
+external disk:
+
+```
+/Volumes/VMs/tart/vms/macos-dev          the working VM
+/Volumes/VMs/tart/vms/macos-dev-golden   a pristine copy to restore from
+```
+
+`vm/scripts/vm-store.sh` sets this and is sourced by `run-tests.sh` and
+`capture-screenshots.sh`. Override it for a run with
+`TART_HOME=/path/to/tart ./vm/run-tests.sh ...`. A bare `tart` command in your
+shell will not see these VMs unless you export it yourself.
+
+**The golden copy costs nothing.** On APFS, `/bin/cp -c` clones block-for-block
+and the two only diverge as the working VM is written to — the clone takes about
+a second and no extra space. It exists because rebuilding a VM from scratch means
+re-downloading the base image and granting Accessibility to three clients by
+hand. To put a broken VM back:
+
+```bash
+export TART_HOME=/Volumes/VMs/tart
+tart delete macos-dev
+/bin/cp -c -R "$TART_HOME/vms/macos-dev-golden" "$TART_HOME/vms/macos-dev"
+```
+
+**When the disk is detached**, the scripts stop before touching tart and say so.
+That check is not just "does the path exist": with the disk unplugged, anything
+writing to `/Volumes/VMs` creates it on the boot drive instead, after which tart
+starts from an empty home and reports no VMs, and macOS cannot mount the real
+disk there. The guard compares device numbers against `/` to tell those apart.
+
+**Run headless.** `tart run` without `--no-graphics` makes the host render the
+guest's screen, and that costs enough CPU for the guest to drop keystrokes at the
+driver's 20ms typing cadence — measured as `Renamed By Te` arriving where
+`Renamed By Test` was typed, which then fails every later assertion in that file.
+`run-tests.sh` already boots headless; only reach for a visible screen when you
+need to watch something, and expect interface failures while you do.
+
 ## UI Screenshots
 
 ```bash
